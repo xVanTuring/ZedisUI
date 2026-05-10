@@ -82,21 +82,6 @@ private struct SessionContent: View {
                     .disabled(true)
             }
             ToolbarItem(placement: .navigation) {
-                Button { /* lock */ } label: { Image(systemName: "lock.open") }
-                    .disabled(true)
-                    .help("Read-only mode (coming soon)")
-            }
-
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    Task { await session.reloadKeys() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .help("Reload keys")
-                .keyboardShortcut("r", modifiers: .command)
-            }
-            ToolbarItem(placement: .navigation) {
                 Menu {
                     ForEach([RedisKeyType.string, .hash, .list, .set, .zset], id: \.self) { t in
                         Button(t.displayName) { newKeyDialog = NewKeyDialog(type: t) }
@@ -136,6 +121,20 @@ private struct SessionContent: View {
                 Button { /* pubsub */ } label: { Image(systemName: "dot.radiowaves.left.and.right") }
                     .disabled(true)
                     .help("Pub/Sub (coming soon)")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button { /* lock */ } label: { Image(systemName: "lock.open") }
+                    .disabled(true)
+                    .help("Read-only mode (coming soon)")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    Task { await session.reloadKeys() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .help("Reload keys")
+                .keyboardShortcut("r", modifiers: .command)
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
