@@ -8,6 +8,7 @@ struct DetailView: View {
     @State private var encoding: String?
     @State private var renameDraft: String = ""
     @State private var pendingTTLEdit = false
+    @State private var showTTLPopover = false
     @State private var favorite: Bool = false
 
     var body: some View {
@@ -106,15 +107,8 @@ struct DetailView: View {
 
     private func metaBar(key: String) -> some View {
         HStack(spacing: 18) {
-            Menu {
-                Button("Set TTL…") { pendingTTLEdit = true }
-                Button("Persist (clear TTL)") {
-                    Task {
-                        try? await session.service.persist(key)
-                        await reloadMeta()
-                    }
-                }
-                .disabled(ttl <= 0)
+            Button {
+                showTTLPopover.toggle()
             } label: {
                 HStack(spacing: 4) {
                     Text("TTL:").foregroundStyle(.secondary)
@@ -124,9 +118,26 @@ struct DetailView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
+            .buttonStyle(.plain)
+            .popover(isPresented: $showTTLPopover, arrowEdge: .top) {
+                TTLPopover(
+                    currentTTL: ttl,
+                    onPersist: {
+                        Task {
+                            try? await session.service.persist(key)
+                            await reloadMeta()
+                        }
+                        showTTLPopover = false
+                    },
+                    onSave: { newSeconds in
+                        Task {
+                            try? await session.service.expire(key, seconds: newSeconds)
+                            await reloadMeta()
+                        }
+                        showTTLPopover = false
+                    }
+                )
+            }
 
             HStack(spacing: 4) {
                 Text("Memory:").foregroundStyle(.secondary)
@@ -242,6 +253,90 @@ private struct TTLEditView: View {
             }
         }
         .padding(20)
+        .frame(width: 320)
+    }
+}
+
+/// Inline TTL editor that anchors to the meta-bar `TTL:` label as a
+/// popover. Number input + unit picker on top, Persist / Save on the
+/// bottom. The unit picker covers the four sensible Redis-side
+/// resolutions; minutes / hours / days are just multipliers — Redis
+/// itself only takes seconds via EXPIRE.
+private struct TTLPopover: View {
+    let currentTTL: Int
+    let onPersist: () -> Void
+    let onSave: (Int) -> Void
+
+    enum Unit: String, CaseIterable, Identifiable {
+        case seconds, minutes, hours, days
+        var id: String { rawValue }
+        var multiplier: Int {
+            switch self {
+            case .seconds: return 1
+            case .minutes: return 60
+            case .hours:   return 3600
+            case .days:    return 86400
+            }
+        }
+    }
+
+    @State private var input: String
+    @State private var unit: Unit
+
+    init(currentTTL: Int, onPersist: @escaping () -> Void, onSave: @escaping (Int) -> Void) {
+        self.currentTTL = currentTTL
+        self.onPersist = onPersist
+        self.onSave = onSave
+        // Pre-fill with the largest unit that yields a whole number, so
+        // "3600s" shows as "1 hours" rather than "3600 seconds".
+        if currentTTL > 0 {
+            if currentTTL.isMultiple(of: 86400) {
+                _input = State(initialValue: String(currentTTL / 86400))
+                _unit  = State(initialValue: .days)
+            } else if currentTTL.isMultiple(of: 3600) {
+                _input = State(initialValue: String(currentTTL / 3600))
+                _unit  = State(initialValue: .hours)
+            } else if currentTTL.isMultiple(of: 60) {
+                _input = State(initialValue: String(currentTTL / 60))
+                _unit  = State(initialValue: .minutes)
+            } else {
+                _input = State(initialValue: String(currentTTL))
+                _unit  = State(initialValue: .seconds)
+            }
+        } else {
+            _input = State(initialValue: "")
+            _unit  = State(initialValue: .seconds)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 8) {
+                TextField("", text: $input)
+                    .textFieldStyle(.roundedBorder)
+                Picker("", selection: $unit) {
+                    ForEach(Unit.allCases) { u in
+                        Text(u.rawValue).tag(u)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
+            HStack {
+                Button("Persist Key", action: onPersist)
+                    .disabled(currentTTL <= 0)
+                Spacer()
+                Button("Save") {
+                    if let n = Int(input), n > 0 {
+                        onSave(n * unit.multiplier)
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled((Int(input) ?? 0) <= 0)
+            }
+        }
+        .padding(14)
         .frame(width: 320)
     }
 }
