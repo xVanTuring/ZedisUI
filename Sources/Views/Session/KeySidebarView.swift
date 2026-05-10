@@ -64,9 +64,19 @@ struct KeySidebarView: View {
     private var keyTreeList: some View {
         let nodes = KeyTreeNode.build(from: filteredKeys)
 
+        // Folder rows share the same List selection mechanism as leaves —
+        // clicking one would otherwise write the folder's synthetic id
+        // (e.g. `group:music_api_stats`) into `selectedKey`, which the
+        // detail pane would then try to render as a key. Membership-check
+        // against the live key list filters those clicks out; folders can
+        // still be expanded via the disclosure triangle.
+        let keyNames = Set(session.keys.map(\.name))
         let selection = Binding<String?>(
             get: { session.selectedKey },
             set: { newValue in
+                if let v = newValue, !keyNames.contains(v) {
+                    return  // folder click — leave the previous selection alone
+                }
                 session.selectedKey = newValue
                 if newValue != nil { session.commandQueryActive = false }
             }
@@ -161,7 +171,9 @@ private struct KeyTreeRow: View {
     var body: some View {
         HStack(spacing: 6) {
             TypeBadge(type: key.type, compact: true)
-            Text(key.name)
+            // `node.label` is the tail after the enclosing folder's prefix
+            // (e.g. `c` inside `a > b`), or the full key name at the root.
+            Text(node.label)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
@@ -185,13 +197,19 @@ private struct KeyGroupRow: View {
     let node: KeyTreeNode
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
+            // Gives the folder row the same vertical mass as leaf rows
+            // (which carry a TypeBadge), so SwiftUI's OutlineGroup centers
+            // the disclosure triangle at the same height for both.
+            Image(systemName: "folder.fill")
+                .foregroundStyle(.secondary)
+                .font(.callout)
             Text(node.label)
                 .lineLimit(1)
+            Spacer()
             Text("\(node.keyCount) keys")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Spacer()
         }
     }
 }
