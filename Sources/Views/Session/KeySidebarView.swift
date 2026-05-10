@@ -6,6 +6,10 @@ import AppKit
 /// toolbar (see `RootView.swift`) so we get native macOS chrome.
 struct KeySidebarView: View {
     @Bindable var session: RedisSession
+    /// Ids of the folders the user has expanded. We track this ourselves
+    /// (instead of relying on `OutlineGroup`'s implicit state) so we can
+    /// toggle on double-click of the row, not just the disclosure chevron.
+    @State private var expandedFolders: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -83,25 +87,11 @@ struct KeySidebarView: View {
         )
 
         return List(selection: selection) {
-            OutlineGroup(nodes, id: \.id, children: \.children) { node in
-                if let key = node.key {
-                    KeyTreeRow(node: node, key: key)
-                        .tag(Optional(key.name))
-                        .contextMenu {
-                            Button("Copy Key Name") {
-                                copyToPasteboard(key.name)
-                            }
-                            Button("Delete", role: .destructive) {
-                                Task {
-                                    _ = try? await session.service.delete([key.name])
-                                    await session.reloadKeys()
-                                }
-                            }
-                        }
-                } else {
-                    KeyGroupRow(node: node)
-                }
-            }
+            KeyTreeContent(
+                nodes: nodes,
+                session: session,
+                expandedFolders: $expandedFolders
+            )
 
             if !session.scanFinished {
                 Button {
@@ -163,6 +153,73 @@ struct NewKeyDialog: Identifiable {
 }
 
 // MARK: - Rows
+
+/// Recursive helper that renders the key tree. Uses `DisclosureGroup` per
+/// folder (rather than `OutlineGroup`'s built-in expansion) so the parent
+/// view owns the expanded-id set and the folder row can react to a
+/// double-click — not just the chevron.
+private struct KeyTreeContent: View {
+    let nodes: [KeyTreeNode]
+    let session: RedisSession
+    @Binding var expandedFolders: Set<String>
+
+    var body: some View {
+        ForEach(nodes) { node in
+            if let key = node.key {
+                KeyTreeRow(node: node, key: key)
+                    .tag(Optional(key.name))
+                    .contextMenu {
+                        Button("Copy Key Name") {
+                            let pb = NSPasteboard.general
+                            pb.clearContents()
+                            pb.setString(key.name, forType: .string)
+                        }
+                        Button("Delete", role: .destructive) {
+                            Task {
+                                _ = try? await session.service.delete([key.name])
+                                await session.reloadKeys()
+                            }
+                        }
+                    }
+            } else if let children = node.children {
+                DisclosureGroup(
+                    isExpanded: Binding(
+                        get: { expandedFolders.contains(node.id) },
+                        set: { isOpen in
+                            if isOpen {
+                                expandedFolders.insert(node.id)
+                            } else {
+                                expandedFolders.remove(node.id)
+                            }
+                        }
+                    )
+                ) {
+                    KeyTreeContent(
+                        nodes: children,
+                        session: session,
+                        expandedFolders: $expandedFolders
+                    )
+                } label: {
+                    KeyGroupRow(node: node)
+                        // contentShape so the gesture covers the row, not
+                        // just the text bounding box.
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) {
+                            toggle(node.id)
+                        }
+                }
+            }
+        }
+    }
+
+    private func toggle(_ id: String) {
+        if expandedFolders.contains(id) {
+            expandedFolders.remove(id)
+        } else {
+            expandedFolders.insert(id)
+        }
+    }
+}
 
 private struct KeyTreeRow: View {
     let node: KeyTreeNode

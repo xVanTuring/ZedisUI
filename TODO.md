@@ -4,18 +4,19 @@
 
 ## 工具栏占位
 
-- [ ] 导航前进 / 后退（`<` `>`）—— 目前是空 closure，需要先定义 navigation history 概念
+- [ ] 导航前进 / 后退（`<` `>`）—— 用户选中 key 的历史栈，下一步要做
 - [ ] Read-only mode（锁图标）—— `disabled(true)`，help "Coming soon"
 - [ ] Pub/Sub（电波图标）—— `disabled(true)`，help "Coming soon"
 
 ## 类型支持
 
-- [ ] **Stream** 编辑器 —— `DetailView` 当前回退到 "Type not supported yet"。先做只读 `XRANGE` 视图够用
-- [ ] **Unknown** 兜底（目前会落到同一个 `ContentUnavailableView`，可保持）
+- [x] **Stream 只读视图** —— `StreamEditor` 用 XRANGE/XLEN 渲染 ID + Fields 表（最近的在上）
+- [ ] **Stream 编辑** —— XADD（新增条目）/ XDEL（删条目）目前没接 UI
+- [ ] **Unknown 兜底** —— 仍是 `ContentUnavailableView "Type not supported yet"`（保留即可）
 
 ## Inspector 面板
 
-- [ ] **String / List / Set 没接通** —— 三个 editor 选中行时不写 `session.inspectorTarget`。Hash / ZSet 已经做了，套同一个模式：在 `.onChange(of: selection)` 里 push 一个 `InspectorTarget`，给 `Kind` 加 `.string` / `.listIndex` / `.setMember`
+- [x] **String / List / Set 接通** —— 五种类型现在都会写 `session.inspectorTarget`：String 是只读预览（StringEditor 才是写者，避免 dirty 冲突），List 走 LSET，Set 用 SREM+SADD 改名
 
 ## Launcher
 
@@ -23,11 +24,9 @@
 - [ ] **Import…** 实际上有实现（`importConnections()`），但没测过覆盖路径（重复 / 格式错误 / Keychain 部分失败）
 - [ ] **Favorite 心形**（DetailView header）—— 当前是纯 `@State`，重启就丢；要持久化得挂到 `AppState` 或 `UserDefaults`
 
-## Preferences（误导性占位）
+## Preferences
 
-- [ ] `ZedisUI.scanPageSize` —— 写进 `@AppStorage` 但 `RedisService.scan` 写死 `count: 200`，从来没读过
-- [ ] `ZedisUI.fontSize` —— 同上，editors 都是系统字体
-- 二选一：要么接通，要么从 UI 里移掉这两个滑块，免得用户以为能调
+- [x] **干掉死按钮** —— `scanPageSize` / `fontSize` 滑块和 General tab 都移除了；只剩 Connections 列表
 
 ## 安全 / 网络
 
@@ -43,10 +42,15 @@
 
 ## Key 浏览 / 编辑
 
+- [x] **文件夹双击 toggle** —— `KeySidebarView` 用 `DisclosureGroup` 替代 `OutlineGroup`，自管 `expandedFolders: Set<String>`，行内双击切换展开
 - [ ] **批量选择删除 keys** —— 侧边栏 `List(selection:)` 当前是单选 `String?`，需要切到 `Set<String>`
 - [ ] **JSON 美化 / 二进制展示** —— `StringEditor` 是纯文本，无格式化、无 hex 视图
 - [ ] **List 大数据分页** —— `LRANGE 0 -1` 一次拉完，大 list 会卡（应该按 page 滚动）
 - [ ] **Reload 单个 key** —— inspector 写完目前是触发 editor 整表 reload；可以加只刷当前 key 的路径
+
+## 开发辅助
+
+- [x] **Demo 数据填充** —— `+` 菜单 → "Fill Demo Data"。`session.seedDemoData()` 先 SCAN 删 `demo:*` 再种一组涵盖五种类型 + Stream + 一个带 TTL 的 string
 
 ## 测试
 
@@ -55,6 +59,7 @@
   - `RedisService.tokenize`（终端解析）
   - `RedisService.scan` 游标分页
   - `KeyTreeNode.build`（嵌套折叠 + 单 key 平铺 + `a:b` 同时存在 `a:b:c` 的边界）
+  - `seedDemoData` 幂等性（重复执行不会双倍）
 
 ## 其它琐碎
 
