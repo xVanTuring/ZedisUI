@@ -45,7 +45,7 @@ struct SessionWindow: View {
 
 private struct SessionContent: View {
     @Bindable var session: RedisSession
-    @State private var showInspector: Bool = true
+    @State private var showInspector: Bool = false
     @State private var newKeyDialog: NewKeyDialog?
     @Environment(\.openWindow) private var openWindow
 
