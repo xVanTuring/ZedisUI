@@ -86,6 +86,10 @@ private struct SessionContent: View {
                     ForEach([RedisKeyType.string, .hash, .list, .set, .zset], id: \.self) { t in
                         Button(t.displayName) { newKeyDialog = NewKeyDialog(type: t) }
                     }
+                    Divider()
+                    Button("Fill Demo Data") {
+                        Task { await session.seedDemoData() }
+                    }
                 } label: {
                     Image(systemName: "plus")
                 }

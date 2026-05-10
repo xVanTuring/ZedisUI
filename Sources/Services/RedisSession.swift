@@ -137,6 +137,84 @@ final class RedisSession {
         await loadMoreKeys()
     }
 
+    /// Wipe any existing `demo:*` keys, then seed a representative
+    /// sample across every supported type — including a Stream entry —
+    /// so the UI has data to exercise. Idempotent.
+    func seedDemoData() async {
+        // Wipe demo:* first so re-running doesn't accumulate.
+        var cursor = 0
+        var existing: [String] = []
+        repeat {
+            let page = (try? await service.scan(
+                cursor: cursor, pattern: "demo:*", count: 500
+            )) ?? (next: 0, keys: [])
+            existing.append(contentsOf: page.keys)
+            cursor = page.next
+        } while cursor != 0
+        if !existing.isEmpty {
+            _ = try? await service.delete(existing)
+        }
+
+        // String — a plain value, a numeric counter, a JSON blob, and one
+        // with a TTL so the meta bar has something to display.
+        try? await service.setString("demo:string:greeting", value: "Hello, Redis!")
+        try? await service.setString("demo:string:counter", value: "42")
+        try? await service.setString(
+            "demo:string:user-json",
+            value: #"{"name":"Alice","role":"admin","tags":["swift","redis"]}"#
+        )
+        try? await service.setString("demo:string:session-token", value: "abc123xyz")
+        try? await service.expire("demo:string:session-token", seconds: 3600)
+
+        // List
+        for v in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
+            try? await service.rpush("demo:list:weekdays", value: v)
+        }
+        for v in ["job-1001", "job-1002", "job-1003", "job-1004"] {
+            try? await service.rpush("demo:list:queue", value: v)
+        }
+
+        // Set
+        for v in ["swift", "redis", "macos", "ui", "client"] {
+            try? await service.sadd("demo:set:tags", member: v)
+        }
+        for v in ["alice", "bob", "charlie", "dana"] {
+            try? await service.sadd("demo:set:users", member: v)
+        }
+
+        // Hash
+        for (f, v) in [("name", "Alice"), ("age", "30"), ("city", "Beijing"), ("role", "admin")] {
+            try? await service.hset("demo:hash:user:1", field: f, value: v)
+        }
+        for (f, v) in [("theme", "dark"), ("lang", "en"), ("debug", "true"), ("tabSize", "4")] {
+            try? await service.hset("demo:hash:settings", field: f, value: v)
+        }
+
+        // ZSet
+        for (m, s) in [("alice", 100.0), ("bob", 85.0), ("charlie", 92.0), ("dana", 76.5)] {
+            try? await service.zadd("demo:zset:leaderboard", member: m, score: s)
+        }
+        let now = Date().timeIntervalSince1970
+        for (i, page) in ["/home", "/about", "/pricing", "/contact"].enumerated() {
+            try? await service.zadd("demo:zset:recent-pages", member: page, score: now - Double(i * 60))
+        }
+
+        // Stream — XADD has no service helper; raw is fine. `*` lets the
+        // server assign IDs.
+        for i in 1...5 {
+            _ = try? await service.raw("XADD", [
+                "demo:stream:events",
+                "*",
+                "type", "click",
+                "user", "user-\(i)",
+                "page", i.isMultiple(of: 2) ? "/home" : "/pricing"
+            ])
+        }
+
+        await refreshDBSize()
+        await reloadKeys()
+    }
+
     /// Loads the next page of keys via SCAN.
     func loadMoreKeys() async {
         guard !scanFinished, status == .connected else { return }
