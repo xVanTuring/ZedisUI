@@ -328,6 +328,29 @@ actor RedisService {
         return Int(reply.int ?? 0)
     }
 
+    /// Deletes one stream entry by ID. Returns the count XDEL reports
+    /// (0 if the id wasn't present).
+    @discardableResult
+    func xdel(_ key: String, id: String) async throws -> Int {
+        let reply = try await raw("XDEL", [key, id])
+        return Int(reply.int ?? 0)
+    }
+
+    /// Appends an entry to a stream with a server-assigned ID. `fields`
+    /// is an ordered list of (field, value) pairs — duplicates are
+    /// allowed by Redis and we preserve the order on the wire.
+    /// Returns the new entry's ID (e.g. `1700000000000-0`).
+    @discardableResult
+    func xadd(_ key: String, fields: [(String, String)]) async throws -> String {
+        var args: [String] = [key, "*"]
+        for (f, v) in fields {
+            args.append(f)
+            args.append(v)
+        }
+        let reply = try await raw("XADD", args)
+        return reply.string ?? ""
+    }
+
     /// Reads up to `count` entries from a stream. Each entry is its
     /// auto-generated ID (`<ms>-<seq>`) plus an ordered list of
     /// field/value pairs (XADD allows duplicate fields, so we keep them
