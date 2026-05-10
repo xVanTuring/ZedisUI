@@ -11,7 +11,8 @@
 ## 类型支持
 
 - [x] **Stream 只读视图** —— `StreamEditor` 用 XRANGE/XLEN 渲染 ID + Fields 表（最近的在上）
-- [ ] **Stream 编辑** —— XADD（新增条目）/ XDEL（删条目）目前没接 UI
+- [x] **Stream 行操作** —— Table 选中、右键 Copy ID / Copy Fields / Delete（XDEL）、底部 "Add entry…" 打开多 field/value sheet 走 XADD
+- [ ] **Stream 单条编辑** —— Redis 流没有 in-place 修改语义；要改只能"删了再 XADD"，UI 没接
 - [ ] **Unknown 兜底** —— 仍是 `ContentUnavailableView "Type not supported yet"`（保留即可）
 
 ## Inspector 面板
@@ -42,6 +43,8 @@
 
 ## Key 浏览 / 编辑
 
+- [x] **文件夹单击 toggle + 持久高亮** —— 用 `DisclosureGroup` 自管 `expandedFolders`；折叠/展开走 List 选中 setter（点行任意位置都覆盖）；视觉高亮用独立 `listSelection` 状态，folder 也能保持选中而不闪回上一个 leaf
+- [x] **TTL 编辑 popover** —— meta bar 上的 TTL 改成 popover：数字 + seconds/minutes/hours/days picker，Persist Key / Save 双按钮；无 TTL 显示 "Forever"
 - [ ] **批量选择删除 keys** —— 侧边栏 `List(selection:)` 当前是单选 `String?`，需要切到 `Set<String>`
 - [ ] **JSON 美化 / 二进制展示** —— `StringEditor` 是纯文本，无格式化、无 hex 视图
 - [ ] **List 大数据分页** —— `LRANGE 0 -1` 一次拉完，大 list 会卡（应该按 page 滚动）

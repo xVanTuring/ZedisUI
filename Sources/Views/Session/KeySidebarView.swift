@@ -6,6 +6,16 @@ import AppKit
 /// toolbar (see `RootView.swift`) so we get native macOS chrome.
 struct KeySidebarView: View {
     @Bindable var session: RedisSession
+    /// Ids of expanded folders. We own the expansion state ourselves so
+    /// the row body (not just the chevron) can toggle on click — and
+    /// keep DisclosureGroup's built-in chevron-rotation + slide animation.
+    @State private var expandedFolders: Set<String> = []
+    /// The List's visual selection. May be a key name *or* a folder id —
+    /// we accept both so folders stay visually selected after a click,
+    /// instead of flashing back to the previous leaf when the binding
+    /// rejects the folder id. Detail pane still keys off
+    /// `session.selectedKey`, which we only update for leaf clicks.
+    @State private var listSelection: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,6 +34,11 @@ struct KeySidebarView: View {
             dbBar
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
+        }
+        // Keep the visual selection in sync if `selectedKey` changes
+        // outside the sidebar (delete, terminal button, key rename, etc.).
+        .onChange(of: session.selectedKey, initial: true) { _, newValue in
+            listSelection = newValue
         }
     }
 
@@ -64,44 +79,45 @@ struct KeySidebarView: View {
     private var keyTreeList: some View {
         let nodes = KeyTreeNode.build(from: filteredKeys)
 
-        // Folder rows share the same List selection mechanism as leaves —
-        // clicking one would otherwise write the folder's synthetic id
-        // (e.g. `group:music_api_stats`) into `selectedKey`, which the
-        // detail pane would then try to render as a key. Membership-check
-        // against the live key list filters those clicks out; folders can
-        // still be expanded via the disclosure triangle.
+        // The List binding's *getter* drives the visual highlight. If we
+        // returned `session.selectedKey`, SwiftUI would snap the
+        // highlight back to the previous leaf right after the user
+        // clicks a folder (a brief "selected → unselected" flash).
+        // Instead, we own a separate `listSelection` that simply
+        // remembers the most recent click — leaf or folder. The setter
+        // then routes:
+        //   leaf id   → write `session.selectedKey` (drives DetailView)
+        //   folder id → toggle expansion only (DetailView unchanged)
         let keyNames = Set(session.keys.map(\.name))
         let selection = Binding<String?>(
-            get: { session.selectedKey },
+            get: { listSelection },
             set: { newValue in
-                if let v = newValue, !keyNames.contains(v) {
-                    return  // folder click — leave the previous selection alone
+                listSelection = newValue
+                guard let v = newValue else {
+                    session.selectedKey = nil
+                    return
                 }
-                session.selectedKey = newValue
-                if newValue != nil { session.commandQueryActive = false }
+                if keyNames.contains(v) {
+                    session.selectedKey = v
+                    session.commandQueryActive = false
+                } else {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        if expandedFolders.contains(v) {
+                            expandedFolders.remove(v)
+                        } else {
+                            expandedFolders.insert(v)
+                        }
+                    }
+                }
             }
         )
 
         return List(selection: selection) {
-            OutlineGroup(nodes, id: \.id, children: \.children) { node in
-                if let key = node.key {
-                    KeyTreeRow(node: node, key: key)
-                        .tag(Optional(key.name))
-                        .contextMenu {
-                            Button("Copy Key Name") {
-                                copyToPasteboard(key.name)
-                            }
-                            Button("Delete", role: .destructive) {
-                                Task {
-                                    _ = try? await session.service.delete([key.name])
-                                    await session.reloadKeys()
-                                }
-                            }
-                        }
-                } else {
-                    KeyGroupRow(node: node)
-                }
-            }
+            KeyTreeContent(
+                nodes: nodes,
+                session: session,
+                expandedFolders: $expandedFolders
+            )
 
             if !session.scanFinished {
                 Button {
@@ -163,6 +179,65 @@ struct NewKeyDialog: Identifiable {
 }
 
 // MARK: - Rows
+
+/// Recursive renderer for the key tree. Uses `DisclosureGroup` so we
+/// keep the native chevron-rotation + content-slide animation, but
+/// drives the binding from a parent-owned `Set<String>` of expanded
+/// ids so a tap anywhere on the folder row toggles — not just the
+/// chevron's hit zone.
+private struct KeyTreeContent: View {
+    let nodes: [KeyTreeNode]
+    let session: RedisSession
+    @Binding var expandedFolders: Set<String>
+
+    var body: some View {
+        ForEach(nodes) { node in
+            if let key = node.key {
+                KeyTreeRow(node: node, key: key)
+                    .tag(Optional(key.name))
+                    .contextMenu {
+                        Button("Copy Key Name") {
+                            let pb = NSPasteboard.general
+                            pb.clearContents()
+                            pb.setString(key.name, forType: .string)
+                        }
+                        Button("Delete", role: .destructive) {
+                            Task {
+                                _ = try? await session.service.delete([key.name])
+                                await session.reloadKeys()
+                            }
+                        }
+                    }
+            } else if let children = node.children {
+                DisclosureGroup(
+                    isExpanded: Binding(
+                        get: { expandedFolders.contains(node.id) },
+                        set: { isOpen in
+                            if isOpen {
+                                expandedFolders.insert(node.id)
+                            } else {
+                                expandedFolders.remove(node.id)
+                            }
+                        }
+                    )
+                ) {
+                    KeyTreeContent(
+                        nodes: children,
+                        session: session,
+                        expandedFolders: $expandedFolders
+                    )
+                } label: {
+                    // Plain row — taps anywhere are routed to the List's
+                    // selection setter, which we repurpose as a toggle for
+                    // folder ids. Chevron click stays on the built-in
+                    // DisclosureGroup path (it won't fire selection too —
+                    // the chevron's button consumes the event).
+                    KeyGroupRow(node: node)
+                }
+            }
+        }
+    }
+}
 
 private struct KeyTreeRow: View {
     let node: KeyTreeNode
