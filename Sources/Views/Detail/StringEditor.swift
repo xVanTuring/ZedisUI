@@ -48,6 +48,15 @@ struct StringEditor: View {
         value = v
         dirty = false
         loaded = true
+        // Mirror the loaded value into the inspector for a quick preview.
+        // Read-only there — we don't want a second edit point fighting
+        // this editor's `dirty` flag.
+        session.inspectorTarget = InspectorTarget(
+            kind: .string,
+            key: key,
+            primary: "",
+            secondary: v
+        )
     }
 
     private func save() async {

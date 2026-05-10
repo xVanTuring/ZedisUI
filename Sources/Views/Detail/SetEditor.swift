@@ -56,6 +56,25 @@ struct SetEditor: View {
             .padding(8)
         }
         .task(id: key) { await load() }
+        .onChange(of: selection) { _, newValue in
+            if let id = newValue, let m = members.first(where: { $0.id == id }) {
+                session.inspectorTarget = InspectorTarget(
+                    kind: .setMember,
+                    key: key,
+                    primary: m.value,
+                    secondary: m.value
+                )
+            } else {
+                session.inspectorTarget = nil
+            }
+        }
+        .onChange(of: key) { _, _ in
+            selection = nil
+            session.inspectorTarget = nil
+        }
+        .onChange(of: session.dataVersion) { _, _ in
+            Task { await load() }
+        }
     }
 
     private func load() async {

@@ -177,16 +177,26 @@ final class RedisSession {
 /// by `InspectorPanel`. Equatable so SwiftUI's `.onChange` can observe.
 struct InspectorTarget: Equatable {
     enum Kind: Equatable {
+        /// Whole-string preview. Inspector is read-only — the StringEditor
+        /// itself owns the editable copy; we don't want both writing.
+        case string
         case hashField
+        /// `primary` carries the index as a decimal string.
+        case listIndex
+        /// `primary` is the original member; editing `secondary` renames
+        /// via SREM + SADD.
+        case setMember
         case zsetMember
     }
     let kind: Kind
     /// The Redis key the row belongs to (e.g. the hash's name).
     let key: String
-    /// Field name or zset member.
+    /// Field name / zset member / list index / original set member.
+    /// Empty for `.string`.
     let primary: String
-    /// Value (hash) or score-as-string (zset) — strings keep the inspector
-    /// type-agnostic; the kind tells `InspectorPanel` how to commit.
+    /// Editable content (or read-only preview for `.string`). Stays a
+    /// String so the inspector can stay type-agnostic; each kind tells
+    /// `InspectorPanel` how to commit.
     let secondary: String
 }
 

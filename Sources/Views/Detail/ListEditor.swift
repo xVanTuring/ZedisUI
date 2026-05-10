@@ -66,6 +66,25 @@ struct ListEditor: View {
             .padding(8)
         }
         .task(id: key) { await load() }
+        .onChange(of: selection) { _, newValue in
+            if let id = newValue, let item = items.first(where: { $0.id == id }) {
+                session.inspectorTarget = InspectorTarget(
+                    kind: .listIndex,
+                    key: key,
+                    primary: String(item.index),
+                    secondary: item.value
+                )
+            } else {
+                session.inspectorTarget = nil
+            }
+        }
+        .onChange(of: key) { _, _ in
+            selection = nil
+            session.inspectorTarget = nil
+        }
+        .onChange(of: session.dataVersion) { _, _ in
+            Task { await load() }
+        }
         .sheet(item: $editTarget) { item in
             ListItemEditSheet(title: "Edit list item #\(item.index)", initial: item.value) { v in
                 Task {
