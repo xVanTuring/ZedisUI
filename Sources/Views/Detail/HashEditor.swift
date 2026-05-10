@@ -58,6 +58,31 @@ struct HashEditor: View {
             .padding(8)
         }
         .task(id: key) { await load() }
+        // Push the focused row into the session so the right-side
+        // InspectorPanel can render and edit it.
+        .onChange(of: selection) { _, newValue in
+            if let id = newValue, let row = rows.first(where: { $0.id == id }) {
+                session.inspectorTarget = InspectorTarget(
+                    kind: .hashField,
+                    key: key,
+                    primary: row.field,
+                    secondary: row.value
+                )
+            } else {
+                session.inspectorTarget = nil
+            }
+        }
+        // Switching keys keeps the editor visible until the new data
+        // arrives; clear stale inspector state so the panel doesn't show
+        // a row that no longer belongs to the current key.
+        .onChange(of: key) { _, _ in
+            selection = nil
+            session.inspectorTarget = nil
+        }
+        // Inspector wrote through to Redis — refetch so the table reflects it.
+        .onChange(of: session.dataVersion) { _, _ in
+            Task { await load() }
+        }
         .sheet(item: $editTarget) { row in
             EditValueSheet(field: row.field, initial: row.value) { newValue in
                 Task {

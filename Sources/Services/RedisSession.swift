@@ -43,6 +43,15 @@ final class RedisSession {
 
     var selectedKey: String?
 
+    /// Currently focused row in the active hash / zset editor, surfaced in
+    /// the right inspector panel. Cleared when the selected key changes.
+    var inspectorTarget: InspectorTarget?
+
+    /// Bumped by the inspector after a write so editors can detect the
+    /// change and reload their tables — they don't have a direct hook back
+    /// from the inspector otherwise.
+    var dataVersion: Int = 0
+
     /// When true, the detail pane shows the Command Query terminal instead
     /// of the selected key's editor. Mutually exclusive with `selectedKey`.
     var commandQueryActive: Bool = false
@@ -159,6 +168,26 @@ final class RedisSession {
             status = .failed(error.localizedDescription)
         }
     }
+}
+
+// MARK: - Inspector target
+
+/// What the right-side inspector panel is currently focused on. Set by
+/// the hash / zset editors when their table selection changes; rendered
+/// by `InspectorPanel`. Equatable so SwiftUI's `.onChange` can observe.
+struct InspectorTarget: Equatable {
+    enum Kind: Equatable {
+        case hashField
+        case zsetMember
+    }
+    let kind: Kind
+    /// The Redis key the row belongs to (e.g. the hash's name).
+    let key: String
+    /// Field name or zset member.
+    let primary: String
+    /// Value (hash) or score-as-string (zset) — strings keep the inspector
+    /// type-agnostic; the kind tells `InspectorPanel` how to commit.
+    let secondary: String
 }
 
 // MARK: - Command history

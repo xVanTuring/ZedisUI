@@ -58,6 +58,25 @@ struct ZSetEditor: View {
             .padding(8)
         }
         .task(id: key) { await load() }
+        .onChange(of: selection) { _, newValue in
+            if let id = newValue, let e = entries.first(where: { $0.id == id }) {
+                session.inspectorTarget = InspectorTarget(
+                    kind: .zsetMember,
+                    key: key,
+                    primary: e.member,
+                    secondary: formatScore(e.score)
+                )
+            } else {
+                session.inspectorTarget = nil
+            }
+        }
+        .onChange(of: key) { _, _ in
+            selection = nil
+            session.inspectorTarget = nil
+        }
+        .onChange(of: session.dataVersion) { _, _ in
+            Task { await load() }
+        }
         .sheet(item: $editTarget) { entry in
             ScoreEditSheet(member: entry.member, initial: entry.score) { newScore in
                 Task {
