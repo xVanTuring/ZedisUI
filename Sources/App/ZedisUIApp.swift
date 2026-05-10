@@ -11,6 +11,11 @@ struct ZedisUIApp: App {
                 .frame(minWidth: 760, minHeight: 460)
         }
         .windowResizability(.contentSize)
+        // Hide the title bar entirely on the Launcher; the traffic lights
+        // stay overlaid on content. Session windows keep the standard bar
+        // because they need .navigationTitle / .navigationSubtitle for the
+        // connection name + host.
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Connection…") {

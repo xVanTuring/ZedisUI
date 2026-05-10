@@ -24,6 +24,21 @@ struct LauncherView: View {
                 .background(.background)
         }
         .frame(minWidth: 760, minHeight: 460)
+        // `.windowStyle(.hiddenTitleBar)` only suppresses the title text;
+        // the title-bar height is still reserved above the content, and
+        // macOS Big Sur+ draws a hairline separator under it. Reach
+        // through to the NSWindow and turn on fullSizeContentView so the
+        // content extends behind the traffic lights, drop the separator,
+        // and ignore the top safe-area inset so SwiftUI lays out under
+        // the title bar instead of below it.
+        .ignoresSafeArea(.all, edges: .top)
+        .background(WindowConfigurator { window in
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+            window.styleMask.insert(.fullSizeContentView)
+            window.titlebarSeparatorStyle = .none
+            window.isMovableByWindowBackground = true
+        })
         .sheet(isPresented: $state.showNewConnectionSheet) {
             ConnectionDialogView(mode: .create) { newConnection in
                 appState.addConnection(newConnection)
@@ -334,4 +349,23 @@ private struct SidebarBackground: View {
         Rectangle()
             .fill(.background.secondary)
     }
+}
+
+/// Reaches the host NSWindow and runs `configure` once attached. Used to
+/// flip flags SwiftUI doesn't expose (e.g. `.fullSizeContentView`) — there
+/// is no SwiftUI-native modifier for those as of macOS 15.
+private struct WindowConfigurator: NSViewRepresentable {
+    let configure: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { [weak view] in
+            if let window = view?.window {
+                configure(window)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
