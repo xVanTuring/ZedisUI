@@ -42,7 +42,6 @@
 
 ## Key 浏览 / 编辑
 
-- [x] **文件夹双击 toggle** —— `KeySidebarView` 用 `DisclosureGroup` 替代 `OutlineGroup`，自管 `expandedFolders: Set<String>`，行内双击切换展开
 - [ ] **批量选择删除 keys** —— 侧边栏 `List(selection:)` 当前是单选 `String?`，需要切到 `Set<String>`
 - [ ] **JSON 美化 / 二进制展示** —— `StringEditor` 是纯文本，无格式化、无 hex 视图
 - [ ] **List 大数据分页** —— `LRANGE 0 -1` 一次拉完，大 list 会卡（应该按 page 滚动）
