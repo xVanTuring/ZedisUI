@@ -46,6 +46,24 @@ struct ZedisUIApp: App {
             }
         }
 
+        // One Command History window per connection. Same value-keyed
+        // WindowGroup pattern as the session window — opening the same
+        // connection twice reuses the existing history window.
+        WindowGroup(id: WindowID.commandHistory, for: Connection.self) { $connection in
+            Group {
+                if let connection {
+                    CommandHistoryView(connection: connection)
+                        .environment(appState)
+                } else {
+                    ContentUnavailableView(
+                        "No Connection",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text("This window is missing its connection.")
+                    )
+                }
+            }
+        }
+
         Settings {
             PreferencesView()
                 .environment(appState)
@@ -56,4 +74,5 @@ struct ZedisUIApp: App {
 enum WindowID {
     static let launcher = "launcher"
     static let session = "session"
+    static let commandHistory = "command-history"
 }

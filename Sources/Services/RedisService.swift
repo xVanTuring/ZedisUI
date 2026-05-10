@@ -26,6 +26,12 @@ actor RedisService {
         }
     }
 
+    /// Optional observer fired before every command is sent to Redis. Used
+    /// by `CommandHistory` to populate the Command History window. The
+    /// closure is `@Sendable` so it can hop to the MainActor; it must not
+    /// capture actor-isolated state synchronously.
+    typealias CommandLogger = @Sendable (_ command: String, _ args: [String], _ at: Date) -> Void
+
     private let host: String
     private let port: Int
     private let username: String?
@@ -34,12 +40,20 @@ actor RedisService {
     private let group: EventLoopGroup
     private var connection: RedisConnection?
     private(set) var currentDB: Int = 0
+    private let commandLogger: CommandLogger?
 
-    init(host: String, port: Int, username: String?, password: String?) {
+    init(
+        host: String,
+        port: Int,
+        username: String?,
+        password: String?,
+        commandLogger: CommandLogger? = nil
+    ) {
         self.host = host
         self.port = port
         self.username = username
         self.password = password
+        self.commandLogger = commandLogger
         // Single-threaded loop is plenty for a UI client.
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     }
@@ -91,6 +105,7 @@ actor RedisService {
     @discardableResult
     func raw(_ command: String, _ args: [String] = []) async throws -> RESPValue {
         guard let conn = connection else { throw ServiceError.notConnected }
+        commandLogger?(command, args, Date())
         let respArgs = args.map { RESPValue(from: $0) }
         return try await conn.send(command: command, with: respArgs).get()
     }

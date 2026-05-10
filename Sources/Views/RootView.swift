@@ -47,6 +47,7 @@ private struct SessionContent: View {
     @Bindable var session: RedisSession
     @State private var showInspector: Bool = true
     @State private var newKeyDialog: NewKeyDialog?
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView {
@@ -124,9 +125,12 @@ private struct SessionContent: View {
                 ConnectionStatusButton(session: session)
             }
             ToolbarItem(placement: .primaryAction) {
-                Button { /* history */ } label: { Image(systemName: "clock") }
-                    .disabled(true)
-                    .help("Command history (coming soon)")
+                Button {
+                    openWindow(id: WindowID.commandHistory, value: session.connection)
+                } label: {
+                    Image(systemName: "clock")
+                }
+                .help("Command history")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button { /* pubsub */ } label: { Image(systemName: "dot.radiowaves.left.and.right") }

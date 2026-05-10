@@ -24,6 +24,7 @@ final class RedisSession {
 
     let connection: Connection
     let service: RedisService
+    let history: CommandHistory
 
     var status: Status = .disconnected
     var availableDBs: Int = 16
@@ -49,11 +50,20 @@ final class RedisSession {
     init(connection: Connection) {
         self.connection = connection
         let password = connection.savePassword ? KeychainHelper.password(for: connection.id) : nil
+        let history = CommandHistory()
+        self.history = history
         self.service = RedisService(
             host: connection.host,
             port: connection.port,
             username: connection.username,
-            password: password
+            password: password,
+            commandLogger: { command, args, at in
+                // RedisService is an actor running on a background loop;
+                // hop to the MainActor before mutating the @Observable.
+                Task { @MainActor in
+                    history.append(.init(timestamp: at, command: command, args: args))
+                }
+            }
         )
         self.currentDB = connection.defaultDB
         // The connection's saved default of "*" is presented as an empty
@@ -148,5 +158,42 @@ final class RedisSession {
         } catch {
             status = .failed(error.localizedDescription)
         }
+    }
+}
+
+// MARK: - Command history
+
+/// One entry in the per-session command log shown in the Command History
+/// window. Captured at `RedisService.raw` (the only command chokepoint).
+struct CommandLogEntry: Identifiable, Hashable {
+    let id = UUID()
+    let timestamp: Date
+    let command: String
+    let args: [String]
+
+    var argument: String { args.joined(separator: " ") }
+}
+
+/// Per-session ring buffer of issued commands. Capped to keep memory bounded
+/// during long sessions; SCAN/TYPE/TTL traffic adds up fast on a busy DB.
+@Observable
+@MainActor
+final class CommandHistory {
+    private(set) var entries: [CommandLogEntry] = []
+    private let maxEntries: Int
+
+    init(maxEntries: Int = 1000) {
+        self.maxEntries = maxEntries
+    }
+
+    func append(_ entry: CommandLogEntry) {
+        entries.append(entry)
+        if entries.count > maxEntries {
+            entries.removeFirst(entries.count - maxEntries)
+        }
+    }
+
+    func clear() {
+        entries.removeAll()
     }
 }
