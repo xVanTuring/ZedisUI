@@ -153,7 +153,8 @@ struct DetailView: View {
         case .list:   ListEditor(session: session, key: key)
         case .set:    SetEditor(session: session, key: key)
         case .zset:   ZSetEditor(session: session, key: key)
-        case .stream, .unknown:
+        case .stream: StreamEditor(session: session, key: key)
+        case .unknown:
             ContentUnavailableView(
                 "Type not supported yet",
                 systemImage: "wrench.and.screwdriver",

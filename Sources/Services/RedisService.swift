@@ -320,6 +320,39 @@ actor RedisService {
         _ = try await raw("ZREM", [key, member])
     }
 
+    // MARK: - Stream
+
+    /// Total number of entries in a stream.
+    func xlen(_ key: String) async throws -> Int {
+        let reply = try await raw("XLEN", [key])
+        return Int(reply.int ?? 0)
+    }
+
+    /// Reads up to `count` entries from a stream. Each entry is its
+    /// auto-generated ID (`<ms>-<seq>`) plus an ordered list of
+    /// field/value pairs (XADD allows duplicate fields, so we keep them
+    /// as an array rather than a dict).
+    func xrange(_ key: String, count: Int = 200) async throws -> [(id: String, fields: [(String, String)])] {
+        let reply = try await raw("XRANGE", [key, "-", "+", "COUNT", String(count)])
+        guard let entries = reply.array else { return [] }
+        return entries.compactMap { entry in
+            guard let parts = entry.array, parts.count >= 2,
+                  let id = parts[0].string,
+                  let fieldArr = parts[1].array
+            else { return nil }
+            var fields: [(String, String)] = []
+            var i = 0
+            while i + 1 < fieldArr.count {
+                fields.append((
+                    fieldArr[i].string ?? "",
+                    fieldArr[i + 1].string ?? ""
+                ))
+                i += 2
+            }
+            return (id, fields)
+        }
+    }
+
     // MARK: - Tokenizer for terminal input
 
     /// Splits a command line on whitespace, honoring single/double quoted strings.
