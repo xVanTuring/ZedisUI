@@ -32,8 +32,8 @@ actor RedisService {
     /// capture actor-isolated state synchronously.
     typealias CommandLogger = @Sendable (_ command: String, _ args: [String], _ at: Date) -> Void
 
-    private let host: String
-    private let port: Int
+    private var host: String
+    private var port: Int
     private let username: String?
     private let password: String?
 
@@ -62,14 +62,28 @@ actor RedisService {
         try? group.syncShutdownGracefully()
     }
 
+    /// Re-point the service at a different endpoint. Used when a session
+    /// brings up an SSH tunnel and wants Redis to dial the locally
+    /// forwarded port instead of the original remote host:port.
+    func setEndpoint(host: String, port: Int) {
+        self.host = host
+        self.port = port
+    }
+
     // MARK: - Lifecycle
 
     func connect(initialDB: Int = 0) async throws {
         guard connection == nil else { return }
         let address = try SocketAddress.makeAddressResolvingHost(host, port: port)
+        // Only forward a non-empty username — empty string would still trigger
+        // RediStack's ACL `AUTH <user> <pass>` path and the server would reject
+        // it as an invalid pair.
+        let effectiveUsername = (username?.isEmpty == false) ? username : nil
+        let effectivePassword = (password?.isEmpty == false) ? password : nil
         let config = try RedisConnection.Configuration(
             address: address,
-            password: password,
+            username: effectiveUsername,
+            password: effectivePassword,
             initialDatabase: initialDB,
             defaultLogger: Logger(label: "ZedisUI.Redis")
         )
@@ -78,15 +92,6 @@ actor RedisService {
             configuration: config,
             boundEventLoop: group.next()
         ).get()
-
-        // If a username is set and the server supports ACL AUTH (Redis 6+),
-        // re-authenticate with username explicitly.
-        if let username, !username.isEmpty, let password, !password.isEmpty {
-            _ = try await conn.send(command: "AUTH", with: [
-                RESPValue(from: username),
-                RESPValue(from: password)
-            ]).get()
-        }
 
         self.connection = conn
         self.currentDB = initialDB

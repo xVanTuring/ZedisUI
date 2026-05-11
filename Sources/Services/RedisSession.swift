@@ -25,6 +25,7 @@ final class RedisSession {
     let connection: Connection
     let service: RedisService
     let history: CommandHistory
+    let tunnel: SSHTunnelService?
 
     var status: Status = .disconnected
     var availableDBs: Int = 16
@@ -74,6 +75,7 @@ final class RedisSession {
                 }
             }
         )
+        self.tunnel = Self.makeTunnel(for: connection)
         self.currentDB = connection.defaultDB
         // The connection's saved default of "*" is presented as an empty
         // search field; any other custom pattern is shown verbatim.
@@ -83,6 +85,10 @@ final class RedisSession {
     func connect() async throws {
         status = .connecting
         do {
+            if let tunnel {
+                let localPort = try await tunnel.start()
+                await service.setEndpoint(host: "127.0.0.1", port: localPort)
+            }
             try await service.connect(initialDB: connection.defaultDB)
             availableDBs = (try? await service.dbCount()) ?? 16
             currentDB = await service.currentDB
@@ -91,6 +97,9 @@ final class RedisSession {
             await refreshDBSize()
             await reloadKeys()
         } catch {
+            // If the SSH tunnel came up but Redis failed, tear it down so we
+            // don't leak the listener/SSH session.
+            if let tunnel { await tunnel.stop() }
             status = .failed(error.localizedDescription)
             throw error
         }
@@ -98,11 +107,69 @@ final class RedisSession {
 
     func disconnect() async {
         await service.disconnect()
+        if let tunnel { await tunnel.stop() }
         status = .disconnected
         keys = []
         scanCursor = 0
         scanFinished = false
         selectedKey = nil
+    }
+
+    // MARK: - SSH tunnel construction
+
+    /// Builds an `SSHTunnelService` from the connection's stored config and
+    /// Keychain-resident secrets. Returns nil if SSH is not configured, or
+    /// if required saved secrets are missing (the connect will then surface
+    /// a clear error). Never throws — credential errors surface at start().
+    private static func makeTunnel(for connection: Connection) -> SSHTunnelService? {
+        guard let cfg = connection.sshTunnel else { return nil }
+        let credential: SSHTunnelService.AuthCredential
+        switch cfg.authMethod {
+        case .password:
+            let pw = cfg.savePassword ? (KeychainHelper.sshPassword(for: connection.id) ?? "") : ""
+            credential = .password(pw)
+        case .privateKey:
+            let keyContents = (try? Self.readPrivateKey(cfg)) ?? ""
+            let passphrase: String? = cfg.savePassphrase
+                ? KeychainHelper.sshPassphrase(for: connection.id)
+                : nil
+            credential = .privateKey(key: keyContents, passphrase: passphrase)
+        }
+        return SSHTunnelService(
+            sshHost: cfg.host,
+            sshPort: cfg.port,
+            username: cfg.username,
+            credential: credential,
+            targetHost: connection.host,
+            targetPort: connection.port
+        )
+    }
+
+    /// Reads the SSH private key file referenced by `config`. Prefers the
+    /// security-scoped bookmark (sandbox-safe across launches); falls back
+    /// to the raw path for the same-session case (where the URL granted by
+    /// `.fileImporter` still works directly).
+    private static func readPrivateKey(_ config: SSHTunnelConfig) throws -> String {
+        if let bookmark = config.privateKeyBookmark {
+            var stale = false
+            let url = try URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &stale
+            )
+            let started = url.startAccessingSecurityScopedResource()
+            defer { if started { url.stopAccessingSecurityScopedResource() } }
+            return try String(contentsOf: url, encoding: .utf8)
+        }
+        if let path = config.privateKeyPath {
+            return try String(contentsOfFile: (path as NSString).expandingTildeInPath, encoding: .utf8)
+        }
+        throw NSError(
+            domain: "ZedisUI.SSH",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "No private key file selected."]
+        )
     }
 
     // MARK: - DB switching

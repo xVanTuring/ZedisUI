@@ -14,6 +14,32 @@ settings:
     DEAD_CODE_STRIPPING: YES
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    # Hardened Runtime is required for Developer ID notarization. Enable
+    # in dev too so release doesn't surface unentitled framework / runtime
+    # incompatibilities late.
+    ENABLE_HARDENED_RUNTIME: YES
+    # T8F5T6HKG8 = "Shenzhen Zhiqishidai Technology". Used during dev so
+    # the binary has a stable Apple Development code signature across
+    # rebuilds — that keeps the file-based Keychain ACL stable and kills
+    # the "ZedisUI wants to access keychain" prompts. Same team is used
+    # for Developer ID notarization at release time.
+    DEVELOPMENT_TEAM: T8F5T6HKG8
+  configs:
+    Debug:
+      # Apple Development auto-signing for dev. Same identity persists
+      # across local rebuilds, so saved keychain items stay accessible.
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_IDENTITY: "Apple Development"
+    Release:
+      # Build the archive with Apple Development; the actual Developer ID
+      # re-sign happens at `xcodebuild -exportArchive` time via the
+      # ExportOptions.plist (method=developer-id). This matches Apple's
+      # canonical Direct Distribution flow.
+      CODE_SIGN_STYLE: Automatic
+      CODE_SIGN_IDENTITY: "Apple Development"
+      # RFC 3161 timestamp — notarization requires it. ExportOptions
+      # would apply this anyway; we set it here as a belt-and-braces.
+      OTHER_CODE_SIGN_FLAGS: "--timestamp"
 
 packages:
   RediStack:
@@ -44,10 +70,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: tech.xvanturing.ZedisUI
         PRODUCT_NAME: ZedisUI
-        ENABLE_HARDENED_RUNTIME: YES
-        CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_IDENTITY: "-"
-        DEVELOPMENT_TEAM: ""
         ENABLE_APP_SANDBOX: YES
         SWIFT_STRICT_CONCURRENCY: minimal
         COMBINE_HIDPI_IMAGES: YES
@@ -57,6 +79,11 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
+        # We bind() a loopback socket to grab a free port for the SSH
+        # tunnel forward, and the child `ssh` process binds the chosen
+        # port itself. The sandbox treats any bind() as a server op, so
+        # without this entitlement both calls fail with EPERM.
+        com.apple.security.network.server: true
         com.apple.security.files.user-selected.read-write: true
     dependencies:
       - package: RediStack

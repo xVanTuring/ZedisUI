@@ -14,6 +14,10 @@ struct Connection: Identifiable, Codable, Hashable {
     /// Optional MATCH pattern to use when scanning keys.
     var defaultPattern: String
 
+    /// When non-nil, the Redis connection is tunneled through this SSH
+    /// session instead of dialed directly. See `SSHTunnelConfig`.
+    var sshTunnel: SSHTunnelConfig?
+
     init(
         id: UUID = UUID(),
         name: String = "New Connection",
@@ -22,7 +26,8 @@ struct Connection: Identifiable, Codable, Hashable {
         username: String? = nil,
         savePassword: Bool = false,
         defaultDB: Int = 0,
-        defaultPattern: String = "*"
+        defaultPattern: String = "*",
+        sshTunnel: SSHTunnelConfig? = nil
     ) {
         self.id = id
         self.name = name
@@ -32,5 +37,6 @@ struct Connection: Identifiable, Codable, Hashable {
         self.savePassword = savePassword
         self.defaultDB = defaultDB
         self.defaultPattern = defaultPattern
+        self.sshTunnel = sshTunnel
     }
 }
