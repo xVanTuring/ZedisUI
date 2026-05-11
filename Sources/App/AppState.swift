@@ -19,6 +19,11 @@ final class AppState {
     var showNewConnectionSheet: Bool = false
     var connectionBeingEdited: Connection?
 
+    /// Shared GitHub-releases auto-updater. Lives on AppState so the
+    /// "Check for Updates…" menu item and the Updater window read the
+    /// same phase.
+    let updater = UpdaterService()
+
     init() {
         self.connections = ConnectionStore.shared.load()
         self.groups = ConnectionStore.shared.loadGroups()

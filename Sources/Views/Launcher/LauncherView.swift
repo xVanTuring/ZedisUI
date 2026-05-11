@@ -5,6 +5,8 @@ struct LauncherView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.openWindow) private var openWindow
 
+    @AppStorage("updater.autoCheck") private var autoCheckUpdates: Bool = true
+
     @State private var quickHost: String = "localhost"
     @State private var quickPort: String = "6379"
     @State private var quickConnecting: Bool = false
@@ -112,6 +114,18 @@ struct LauncherView: View {
             } onCancel: {
                 importPassphraseSheet = nil
             }
+        }
+        .task {
+            // Silent launch-time update check. Only auto-opens the
+            // updater window if a newer version exists.
+            guard autoCheckUpdates else { return }
+            let phase = await appState.updater.check(silent: true)
+            if case .available = phase {
+                openWindow(id: WindowID.updater)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openUpdaterWindow)) { _ in
+            openWindow(id: WindowID.updater)
         }
     }
 

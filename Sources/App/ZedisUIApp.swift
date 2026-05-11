@@ -23,6 +23,18 @@ struct ZedisUIApp: App {
                 }
                 .keyboardShortcut("n", modifiers: .command)
             }
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    if let win = NSApp.windows.first(where: { $0.identifier?.rawValue.contains(WindowID.updater) == true }) {
+                        win.makeKeyAndOrderFront(nil)
+                    } else {
+                        // A view bridges this notification to `openWindow`,
+                        // which isn't available from a CommandGroup closure.
+                        NotificationCenter.default.post(name: .openUpdaterWindow, object: nil)
+                    }
+                }
+            }
             CommandGroup(after: .windowList) {
                 Divider()
                 Button("Connection Manager") {
@@ -87,6 +99,15 @@ struct ZedisUIApp: App {
             }
         }
 
+        // Singleton updater window. Opened from the app menu and (when
+        // a background launch-time check finds a new version) auto-opened
+        // by the launcher.
+        Window("Software Update", id: WindowID.updater) {
+            UpdateView()
+                .environment(appState)
+        }
+        .windowResizability(.contentSize)
+
         Settings {
             PreferencesView()
                 .environment(appState)
@@ -99,4 +120,9 @@ enum WindowID {
     static let session = "session"
     static let commandHistory = "command-history"
     static let connectionDetail = "connection-detail"
+    static let updater = "updater"
+}
+
+extension Notification.Name {
+    static let openUpdaterWindow = Notification.Name("ZedisUI.openUpdaterWindow")
 }
