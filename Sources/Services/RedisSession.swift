@@ -36,6 +36,13 @@ final class RedisSession {
     var keys: [RedisKey] = []
     var scanCursor: Int = 0
     var scanFinished: Bool = false
+    /// Monotonically increasing identifier for the current key listing.
+    /// Bumped each time `reloadKeys()` resets the page; the sidebar uses
+    /// this as a SwiftUI `.id()` so the underlying List view gets rebuilt
+    /// from scratch on each reload — that keeps stale rows (e.g. the row
+    /// for the previously selected key) from lingering after a search
+    /// that returns a different result set.
+    var reloadEpoch: Int = 0
     /// The text shown in the search field. Empty means "match everything";
     /// SCAN gets `*` in that case (see `loadMoreKeys`). The field is bound
     /// directly to `.searchable`, so we keep it free of the literal "*".
@@ -201,6 +208,7 @@ final class RedisSession {
         keys = []
         scanCursor = 0
         scanFinished = false
+        reloadEpoch &+= 1
         await loadMoreKeys()
     }
 
@@ -286,7 +294,19 @@ final class RedisSession {
     func loadMoreKeys() async {
         guard !scanFinished, status == .connected else { return }
         do {
-            let effectivePattern = pattern.isEmpty ? "*" : pattern
+            // Redis SCAN MATCH is exact-glob matching, so a bare "foo"
+            // only matches a key literally named "foo". Users typing in
+            // the search field almost always want substring search, so
+            // auto-wrap with `*…*` when they didn't supply any glob
+            // metacharacters. Power users can still type `foo:*` etc.
+            let effectivePattern: String
+            if pattern.isEmpty {
+                effectivePattern = "*"
+            } else if pattern.contains("*") || pattern.contains("?") || pattern.contains("[") {
+                effectivePattern = pattern
+            } else {
+                effectivePattern = "*\(pattern)*"
+            }
             let page = try await service.scan(cursor: scanCursor, pattern: effectivePattern, count: 200)
             // Resolve type for each key concurrently so the list shows the icon + ttl.
             let resolved = try await withThrowingTaskGroup(of: RedisKey.self) { group -> [RedisKey] in

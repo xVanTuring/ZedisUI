@@ -40,6 +40,17 @@ struct KeySidebarView: View {
         .onChange(of: session.selectedKey, initial: true) { _, newValue in
             listSelection = newValue
         }
+        // After a reload (e.g. user searched and the previously selected
+        // key is no longer in the result set), drop the stale list
+        // highlight so List doesn't try to render a row that isn't in
+        // the data — that's what produces the phantom rows.
+        .onChange(of: session.reloadEpoch) { _, _ in
+            if let sel = listSelection,
+               !session.keys.contains(where: { $0.name == sel }),
+               !expandedFolders.contains(sel) {
+                listSelection = nil
+            }
+        }
     }
 
     private var terminalRow: some View {
@@ -135,6 +146,10 @@ struct KeySidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // Bumped by RedisSession on every reloadKeys; combined with the
+        // listSelection cleanup above, this forces SwiftUI to discard any
+        // cached row views that don't correspond to the new key set.
+        .id(session.reloadEpoch)
     }
 
     private var filteredKeys: [RedisKey] {
