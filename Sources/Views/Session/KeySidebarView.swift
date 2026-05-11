@@ -16,6 +16,13 @@ struct KeySidebarView: View {
     /// rejects the folder id. Detail pane still keys off
     /// `session.selectedKey`, which we only update for leaf clicks.
     @State private var listSelection: String?
+    /// Text-field draft for the DB number at the bottom of the sidebar.
+    /// Synced to `session.currentDB` on appear / external change and
+    /// committed back via `switchDB` on Enter or stepper click. Kept as
+    /// its own state so a half-typed number doesn't cause spurious
+    /// SELECTs on every keystroke.
+    @State private var dbDraft: Int = 0
+    @FocusState private var dbFieldFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -159,24 +166,64 @@ struct KeySidebarView: View {
 
     // MARK: - DB bar
 
+    /// DB switcher. A menu picker with 16 entries is fine; with 256
+    /// (the Redis default) it's unusable, so we switched to a small
+    /// editable field with stepper arrows. The text field commits on
+    /// Enter (or focus loss); the stepper commits each click. Both
+    /// run through `switchDB` so the rest of the session state stays
+    /// consistent.
     private var dbBar: some View {
-        HStack {
-            Spacer()
-            Picker("DB", selection: Binding(
-                get: { session.currentDB },
-                set: { newDB in Task { await session.switchDB(to: newDB) } }
-            )) {
-                ForEach(0..<session.availableDBs, id: \.self) { i in
-                    Text("DB \(i)").tag(i)
-                }
+        let maxDB = max(0, session.availableDBs - 1)
+        let stepperBinding = Binding<Int>(
+            get: { session.currentDB },
+            set: { newDB in
+                let clamped = min(max(newDB, 0), maxDB)
+                dbDraft = clamped
+                Task { await session.switchDB(to: clamped) }
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .fixedSize()
+        )
+
+        return HStack(spacing: 6) {
+            Spacer()
+            Text("DB")
+                .foregroundStyle(.secondary)
+                .font(.callout)
+            TextField("", value: $dbDraft, formatter: dbFormatter(max: maxDB))
+                .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 56)
+                .focused($dbFieldFocused)
+                .onSubmit { commitDBDraft(maxDB: maxDB) }
+            Stepper("", value: stepperBinding, in: 0...maxDB)
+                .labelsHidden()
             Text("(\(session.dbSize))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .frame(minWidth: 36, alignment: .trailing)
         }
+        .onAppear { dbDraft = session.currentDB }
+        .onChange(of: session.currentDB) { _, new in
+            // Mirror back into the field unless the user is mid-edit;
+            // overwriting their draft mid-typing would be jarring.
+            if !dbFieldFocused { dbDraft = new }
+        }
+    }
+
+    private func commitDBDraft(maxDB: Int) {
+        let target = min(max(dbDraft, 0), maxDB)
+        dbDraft = target
+        if target != session.currentDB {
+            Task { await session.switchDB(to: target) }
+        }
+        dbFieldFocused = false
+    }
+
+    private func dbFormatter(max: Int) -> NumberFormatter {
+        let f = NumberFormatter()
+        f.allowsFloats = false
+        f.minimum = 0
+        f.maximum = NSNumber(value: max)
+        return f
     }
 
     // MARK: - Actions
