@@ -61,7 +61,7 @@ targets:
         CFBundleShortVersionString: "0.1.2"
         CFBundleVersion: "3"
         LSMinimumSystemVersion: "15.0"
-        NSHumanReadableCopyright: "Copyright © 2026"
+        NSHumanReadableCopyright: "Copyright © xVanTuring 2026"
         NSHighResolutionCapable: true
         NSPrincipalClass: NSApplication
         NSAppTransportSecurity:
