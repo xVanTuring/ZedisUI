@@ -91,7 +91,7 @@ security find-identity -v -p codesigning \
          echo "       Get one from Xcode → Settings → Accounts → Manage Certificates." >&2
          exit 1; }
 
-xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" --limit 1 >/dev/null 2>&1 \
+xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
     || { echo "ERROR: notarytool profile '${NOTARY_PROFILE}' is missing or invalid." >&2
          echo "       See docs/release.md → 'Set up notarytool profile'." >&2
          exit 1; }
