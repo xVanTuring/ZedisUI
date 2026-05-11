@@ -127,7 +127,7 @@ rm -f project.yml.bak
 xcodegen >/dev/null
 
 echo "==> Committing version bump"
-git add project.yml
+git add project.yml Resources/Info.plist
 git commit -m "Bump version to ${VERSION} (build ${next_build})"
 
 if [[ "$DRY_RUN" == "true" ]]; then

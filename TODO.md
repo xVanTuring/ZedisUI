@@ -65,7 +65,7 @@
 
 ## Release 流程
 
-- [ ] **Info.plist 未随版本 bump 一起提交** —— `release.sh` 的 `git add` 只加了 `project.yml`；`xcodegen` 运行后同步更新的 `Resources/Info.plist` 每次都留一个脏状态。修法：在 version bump 的 `git add` 里补上 `Resources/Info.plist`。
+- [x] **Info.plist 未随版本 bump 一起提交** —— `release.sh` 的 `git add` 已补上 `Resources/Info.plist`。
 
 ## 其它琐碎
 
