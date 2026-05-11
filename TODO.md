@@ -32,7 +32,7 @@
 ## 安全 / 网络
 
 - [ ] **TLS** —— `RedisConnection.Configuration` 没传 tls，`Connection` 模型也没暴露字段
-- [ ] **SSH tunnel** —— 完全没做
+- [x] **SSH tunnel** —— `SSHTunnelConfig` + `SSHTunnelService`（走 `/usr/bin/ssh -L`），对话框里 password / private-key 两种 auth；session 启动时先拉 tunnel 再 dial 127.0.0.1:<localPort>
 - [ ] **Cluster / Sentinel** —— 单连接，未考虑 cluster 路由
 
 ## Terminal / 命令面板
