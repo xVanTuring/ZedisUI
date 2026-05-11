@@ -49,7 +49,27 @@ final class RedisSession {
     var pattern: String = ""
     var typeFilter: RedisKeyType? = nil
 
-    var selectedKey: String?
+    var selectedKey: String? {
+        didSet { recordSelection(oldValue: oldValue) }
+    }
+
+    /// Per-session back/forward navigation stack of selected key names.
+    /// Capped to avoid unbounded growth on long sessions; oldest entries
+    /// get evicted. Cleared on disconnect / DB switch since those reset
+    /// the working key set entirely.
+    private(set) var navigationHistory: [String] = []
+    private(set) var historyIndex: Int = -1
+
+    /// Set by `goBack` / `goForward` immediately before re-assigning
+    /// `selectedKey`, so the didSet observer skips re-recording the
+    /// programmatic write into history.
+    @ObservationIgnored
+    private var isReplayingHistory = false
+
+    private static let maxHistory = 50
+
+    var canGoBack: Bool { historyIndex > 0 }
+    var canGoForward: Bool { historyIndex < navigationHistory.count - 1 }
 
     /// Currently focused row in the active hash / zset editor, surfaced in
     /// the right inspector panel. Cleared when the selected key changes.
@@ -120,6 +140,55 @@ final class RedisSession {
         scanCursor = 0
         scanFinished = false
         selectedKey = nil
+        clearNavigationHistory()
+    }
+
+    // MARK: - Navigation history
+
+    /// Moves the selection one step back in history. No-op when already
+    /// at the start of the stack.
+    func goBack() {
+        guard canGoBack else { return }
+        historyIndex -= 1
+        isReplayingHistory = true
+        selectedKey = navigationHistory[historyIndex]
+        commandQueryActive = false
+    }
+
+    func goForward() {
+        guard canGoForward else { return }
+        historyIndex += 1
+        isReplayingHistory = true
+        selectedKey = navigationHistory[historyIndex]
+        commandQueryActive = false
+    }
+
+    private func clearNavigationHistory() {
+        navigationHistory.removeAll()
+        historyIndex = -1
+    }
+
+    /// Called by `selectedKey`'s didSet. Records each user-initiated
+    /// selection in the navigation stack, truncating any "forward"
+    /// entries after the current index (standard browser behavior).
+    /// Nil selections (e.g. Command Query button, disconnect) are not
+    /// recorded but also don't truncate.
+    private func recordSelection(oldValue: String?) {
+        if isReplayingHistory {
+            isReplayingHistory = false
+            return
+        }
+        guard let key = selectedKey, key != oldValue else { return }
+        if historyIndex < navigationHistory.count - 1 {
+            navigationHistory.removeSubrange((historyIndex + 1)...)
+        }
+        if navigationHistory.last != key {
+            navigationHistory.append(key)
+            if navigationHistory.count > Self.maxHistory {
+                navigationHistory.removeFirst(navigationHistory.count - Self.maxHistory)
+            }
+            historyIndex = navigationHistory.count - 1
+        }
     }
 
     // MARK: - SSH tunnel construction
@@ -190,6 +259,7 @@ final class RedisSession {
             scanCursor = 0
             scanFinished = false
             selectedKey = nil
+            clearNavigationHistory()
             await refreshDBSize()
             await reloadKeys()
         } catch {

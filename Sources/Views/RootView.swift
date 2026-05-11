@@ -76,10 +76,18 @@ private struct SessionContent: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
-                Button { /* nav back */ } label: { Image(systemName: "chevron.left") }
-                    .disabled(true)
-                Button { /* nav fwd */ } label: { Image(systemName: "chevron.right") }
-                    .disabled(true)
+                Button { session.goBack() } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .disabled(!session.canGoBack)
+                .help("Back")
+                .keyboardShortcut("[", modifiers: .command)
+                Button { session.goForward() } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .disabled(!session.canGoForward)
+                .help("Forward")
+                .keyboardShortcut("]", modifiers: .command)
             }
             ToolbarItem(placement: .navigation) {
                 Menu {
