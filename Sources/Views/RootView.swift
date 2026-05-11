@@ -235,6 +235,7 @@ private struct ConnectionStatusButton: View {
 private struct ConnectionStatusPopover: View {
     let session: RedisSession
     let onDismiss: () -> Void
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -282,6 +283,10 @@ private struct ConnectionStatusPopover: View {
                     .keyboardShortcut(.defaultAction)
                 }
                 Spacer()
+                Button("Detail") {
+                    openWindow(id: WindowID.connectionDetail, value: session.connection)
+                    onDismiss()
+                }
             }
         }
         .padding(16)

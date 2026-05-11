@@ -69,6 +69,24 @@ struct ZedisUIApp: App {
             }
         }
 
+        // Connection Detail — a separate window that surfaces the full
+        // INFO snapshot (server, memory, clients, stats, keyspace) plus
+        // the saved profile. Same value-keyed reuse pattern.
+        WindowGroup(id: WindowID.connectionDetail, for: Connection.self) { $connection in
+            Group {
+                if let connection {
+                    ConnectionDetailView(connection: connection)
+                        .environment(appState)
+                } else {
+                    ContentUnavailableView(
+                        "No Connection",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text("This window is missing its connection.")
+                    )
+                }
+            }
+        }
+
         Settings {
             PreferencesView()
                 .environment(appState)
@@ -80,4 +98,5 @@ enum WindowID {
     static let launcher = "launcher"
     static let session = "session"
     static let commandHistory = "command-history"
+    static let connectionDetail = "connection-detail"
 }
