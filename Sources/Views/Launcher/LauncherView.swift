@@ -13,7 +13,31 @@ struct LauncherView: View {
     @State private var newGroupPresented: Bool = false
     @State private var groupRenameTarget: ConnectionGroup?
     @State private var collapsedGroups: Set<UUID> = []
-    @State private var importSummary: String?
+    @State private var importSummary: StatusBanner?
+
+    /// Inline result banner shown above the saved-connections list after
+    /// an import or export. `fileURL`, when set, makes `fileName` a
+    /// clickable Reveal-in-Finder target.
+    private struct StatusBanner {
+        var prefix: String
+        var fileName: String?
+        var fileURL: URL?
+    }
+
+    /// Export flow state: when non-nil the passphrase sheet is shown.
+    @State private var exportPassphraseSheet: ExportRequest?
+    /// Import flow state: when non-nil the file is an encrypted envelope
+    /// and we need a passphrase before decrypting.
+    @State private var importPassphraseSheet: ImportRequest?
+
+    private struct ExportRequest: Identifiable {
+        let id = UUID()
+    }
+    private struct ImportRequest: Identifiable {
+        let id = UUID()
+        let data: Data
+        let sourceName: String
+    }
 
     var body: some View {
         @Bindable var state = appState
@@ -62,6 +86,31 @@ struct LauncherView: View {
         .sheet(item: $groupRenameTarget) { group in
             GroupNameSheet(title: "Rename Group", initialName: group.name) { name in
                 appState.renameGroup(group.id, to: name)
+            }
+        }
+        .sheet(item: $exportPassphraseSheet) { _ in
+            ExportOptionsSheet { includePasswords, passphrase in
+                exportPassphraseSheet = nil
+                if includePasswords {
+                    performEncryptedExport(passphrase: passphrase)
+                } else {
+                    performPlainExport()
+                }
+            } onCancel: {
+                exportPassphraseSheet = nil
+            }
+        }
+        .sheet(item: $importPassphraseSheet) { request in
+            PassphraseSheet(
+                title: "Decrypt \(request.sourceName)",
+                hint: "Enter the passphrase used when this file was exported.",
+                primaryLabel: "Import",
+                requiresConfirm: false
+            ) { passphrase in
+                importPassphraseSheet = nil
+                performEncryptedImport(data: request.data, passphrase: passphrase, sourceName: request.sourceName)
+            } onCancel: {
+                importPassphraseSheet = nil
             }
         }
     }
@@ -202,7 +251,25 @@ struct LauncherView: View {
             if let importSummary {
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle")
-                    Text(importSummary).font(.caption)
+                    HStack(spacing: 0) {
+                        Text(importSummary.prefix).font(.caption)
+                        if let name = importSummary.fileName {
+                            if let url = importSummary.fileURL {
+                                Button {
+                                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                                } label: {
+                                    Text(name)
+                                        .font(.caption)
+                                        .underline()
+                                        .foregroundStyle(Color.accentColor)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Show in Finder")
+                            } else {
+                                Text(name).font(.caption)
+                            }
+                        }
+                    }
                     Spacer()
                     Button {
                         self.importSummary = nil
@@ -407,37 +474,97 @@ struct LauncherView: View {
         panel.allowsMultipleSelection = false
         panel.title = "Import connections from JSON"
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        let data: Data
         do {
-            let data = try Data(contentsOf: url)
-            let imported = try JSONDecoder().decode([Connection].self, from: data)
-            let existingNames = Set(appState.connections.map { $0.name })
-            var added = 0
-            var skipped = 0
-            for c in imported {
-                if existingNames.contains(c.name) {
-                    skipped += 1
-                    continue
-                }
-                // Re-key so we don't collide with existing ids. Clear
-                // group membership so imported items land in Ungrouped
-                // rather than dangling at a missing group id.
-                var copy = c
-                copy.id = UUID()
-                copy.groupId = nil
-                appState.addConnection(copy)
-                added += 1
-            }
-            importSummary = "Imported \(added) connection\(added == 1 ? "" : "s")"
-                + (skipped > 0 ? " · skipped \(skipped) duplicate name\(skipped == 1 ? "" : "s")" : "")
+            data = try Data(contentsOf: url)
         } catch {
-            let alert = NSAlert()
-            alert.messageText = "Could not import connections"
-            alert.informativeText = "The file isn't a recognized ZedisUI connections export.\n\n\(error.localizedDescription)"
-            alert.runModal()
+            showImportError(error.localizedDescription)
+            return
+        }
+        if ExportCrypto.isEncryptedEnvelope(data) {
+            // Defer decryption until after the user supplies a passphrase.
+            importPassphraseSheet = ImportRequest(data: data, sourceName: url.lastPathComponent)
+            return
+        }
+        // Plain `[Connection]` JSON — back-compat path for files exported
+        // before the encrypted format existed. No secrets are restored.
+        do {
+            let imported = try JSONDecoder().decode([Connection].self, from: data)
+            applyImportedConnections(imported, secrets: [])
+        } catch {
+            showImportError("The file isn't a recognized ZedisUI connections export.\n\n\(error.localizedDescription)")
         }
     }
 
+    private func performEncryptedImport(data: Data, passphrase: String, sourceName: String) {
+        do {
+            let payload = try ExportCrypto.decrypt(envelope: data, passphrase: passphrase)
+            applyImportedConnections(payload.connections, secrets: payload.secrets)
+        } catch {
+            showImportError(error.localizedDescription)
+        }
+    }
+
+    /// Merges imported connections into the saved list, re-keying ids
+    /// and restoring each connection's secrets to the Keychain under
+    /// the new id. Dedupes by display name like the older flat-JSON
+    /// path did, so re-importing the same file is safe.
+    private func applyImportedConnections(
+        _ imported: [Connection],
+        secrets: [ExportPayload.SecretBundle]
+    ) {
+        let existingNames = Set(appState.connections.map { $0.name })
+        let secretsById = Dictionary(uniqueKeysWithValues: secrets.map { ($0.connectionId, $0) })
+        var added = 0
+        var skipped = 0
+        for c in imported {
+            if existingNames.contains(c.name) {
+                skipped += 1
+                continue
+            }
+            var copy = c
+            let oldId = copy.id
+            copy.id = UUID()
+            // Clear group membership so imported items land in Ungrouped
+            // rather than dangling at a missing group id.
+            copy.groupId = nil
+            appState.addConnection(copy)
+
+            if let bundle = secretsById[oldId] {
+                if let pw = bundle.redisPassword, copy.savePassword {
+                    KeychainHelper.setPassword(pw, for: copy.id)
+                }
+                if let pw = bundle.sshPassword,
+                   let ssh = copy.sshTunnel, ssh.savePassword {
+                    KeychainHelper.setSSHPassword(pw, for: copy.id)
+                }
+                if let pp = bundle.sshPassphrase,
+                   let ssh = copy.sshTunnel, ssh.savePassphrase {
+                    KeychainHelper.setSSHPassphrase(pp, for: copy.id)
+                }
+            }
+            added += 1
+        }
+        let text = "Imported \(added) connection\(added == 1 ? "" : "s")"
+            + (skipped > 0 ? " · skipped \(skipped) duplicate name\(skipped == 1 ? "" : "s")" : "")
+        importSummary = StatusBanner(prefix: text)
+    }
+
+    private func showImportError(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Could not import connections"
+        alert.informativeText = message
+        alert.runModal()
+    }
+
     private func exportConnections() {
+        guard !appState.connections.isEmpty else { return }
+        // Ask for the passphrase first; if the user cancels we never
+        // bother prompting for a destination file.
+        exportPassphraseSheet = ExportRequest()
+    }
+
+    private func performPlainExport() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = "zedisui-connections.json"
@@ -448,7 +575,58 @@ struct LauncherView: View {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(appState.connections)
             try data.write(to: url, options: .atomic)
-            importSummary = "Exported \(appState.connections.count) connection\(appState.connections.count == 1 ? "" : "s") to \(url.lastPathComponent)"
+            importSummary = StatusBanner(
+                prefix: "Exported \(appState.connections.count) connection\(appState.connections.count == 1 ? "" : "s") to ",
+                fileName: url.lastPathComponent,
+                fileURL: url
+            )
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Could not export connections"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
+    }
+
+    private func performEncryptedExport(passphrase: String) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "zedisui-connections.zedis-export.json"
+        panel.title = "Export encrypted connections"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            // Pull each connection's secrets out of the Keychain so the
+            // recipient gets a fully self-contained file. We skip the
+            // bundle entirely for connections that don't have any
+            // savePassword/savePassphrase toggle set, to keep the export
+            // small and avoid stashing empty strings.
+            let secrets: [ExportPayload.SecretBundle] = appState.connections.compactMap { conn in
+                var bundle = ExportPayload.SecretBundle(connectionId: conn.id)
+                var anything = false
+                if conn.savePassword, let pw = KeychainHelper.password(for: conn.id) {
+                    bundle.redisPassword = pw
+                    anything = true
+                }
+                if let ssh = conn.sshTunnel {
+                    if ssh.savePassword, let pw = KeychainHelper.sshPassword(for: conn.id) {
+                        bundle.sshPassword = pw
+                        anything = true
+                    }
+                    if ssh.savePassphrase, let pp = KeychainHelper.sshPassphrase(for: conn.id) {
+                        bundle.sshPassphrase = pp
+                        anything = true
+                    }
+                }
+                return anything ? bundle : nil
+            }
+            let payload = ExportPayload(connections: appState.connections, secrets: secrets)
+            let data = try ExportCrypto.encrypt(payload: payload, passphrase: passphrase)
+            try data.write(to: url, options: .atomic)
+            importSummary = StatusBanner(
+                prefix: "Exported \(appState.connections.count) connection\(appState.connections.count == 1 ? "" : "s") (encrypted) to ",
+                fileName: url.lastPathComponent,
+                fileURL: url
+            )
         } catch {
             let alert = NSAlert()
             alert.messageText = "Could not export connections"
@@ -771,6 +949,122 @@ private struct GroupNameSheet: View {
         guard !trimmed.isEmpty else { return }
         onSave(trimmed)
         dismiss()
+    }
+}
+
+/// Export options: lets the user opt into including saved passwords
+/// (Redis + SSH). When that toggle is on we encrypt the file with a
+/// user-chosen passphrase; when it's off we write plain JSON without
+/// secrets, no passphrase needed.
+private struct ExportOptionsSheet: View {
+    let onSubmit: (_ includePasswords: Bool, _ passphrase: String) -> Void
+    let onCancel: () -> Void
+
+    @State private var includePasswords: Bool = false
+    @State private var passphrase: String = ""
+    @State private var confirm: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Export Connections").font(.headline)
+            Toggle("Include saved passwords", isOn: $includePasswords)
+            Text(includePasswords
+                 ? "Stored Redis and SSH passwords will be included. The file is encrypted with the passphrase below — keep it safe; without it the file can't be imported."
+                 : "Only connection metadata (host, port, username, etc.) will be exported. The file is plain JSON.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if includePasswords {
+                SecureField("Passphrase", text: $passphrase)
+                    .textFieldStyle(.roundedBorder)
+                SecureField("Confirm passphrase", text: $confirm)
+                    .textFieldStyle(.roundedBorder)
+                if !confirm.isEmpty && confirm != passphrase {
+                    Label("Passphrases don't match", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button(includePasswords ? "Export…" : "Export…", action: submit)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canSubmit)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+    }
+
+    private var canSubmit: Bool {
+        if !includePasswords { return true }
+        return !passphrase.isEmpty && passphrase == confirm
+    }
+
+    private func submit() {
+        guard canSubmit else { return }
+        onSubmit(includePasswords, passphrase)
+    }
+}
+
+/// Generic two-field passphrase sheet shared by the encrypted export
+/// and the encrypted import flows. `requiresConfirm` enables the second
+/// field with an inline "do not match" warning.
+private struct PassphraseSheet: View {
+    let title: String
+    let hint: String
+    let primaryLabel: String
+    let requiresConfirm: Bool
+    let onSubmit: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var passphrase: String = ""
+    @State private var confirm: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title).font(.headline)
+            Text(hint)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            SecureField("Passphrase", text: $passphrase)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(submit)
+            if requiresConfirm {
+                SecureField("Confirm passphrase", text: $confirm)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(submit)
+                if !confirm.isEmpty && confirm != passphrase {
+                    Label("Passphrases don't match", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button(primaryLabel, action: submit)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canSubmit)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    private var canSubmit: Bool {
+        guard !passphrase.isEmpty else { return false }
+        if requiresConfirm && confirm != passphrase { return false }
+        return true
+    }
+
+    private func submit() {
+        guard canSubmit else { return }
+        onSubmit(passphrase)
     }
 }
 
