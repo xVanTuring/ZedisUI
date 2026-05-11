@@ -21,9 +21,9 @@
 
 ## Launcher
 
-- [ ] **New Group…** 按钮 disabled —— `Connection` 模型没分组字段；要做需要新引入 `ConnectionGroup` 或给 `Connection` 加 `groupId`
-- [ ] **Import…** 实际上有实现（`importConnections()`），但没测过覆盖路径（重复 / 格式错误 / Keychain 部分失败）
-- [ ] **Favorite 心形**（DetailView header）—— 当前是纯 `@State`，重启就丢；要持久化得挂到 `AppState` 或 `UserDefaults`
+- [x] **分组** —— 新增 `ConnectionGroup` + `Connection.groupId`，持久化到 UserDefaults 单独的 key；侧栏 "New Group…" 走 sheet，列表里按 Pinned / 各 group / Ungrouped 三段渲染；group header 可折叠、可重命名、可删除（删除后成员落回 Ungrouped）；行的右键菜单加了 "Move to Group"
+- [x] **Pinned 置顶**（取代原 Favorite 心形）—— `Connection.isPinned` 持久化；hover 露出图钉按钮 + 右键 "Pin to Top"；DetailView header 的心形已移除
+- [x] **Import / Export** —— Import 按名字去重、跳过的不阻塞剩余项、错误用 NSAlert + 友好文案；新增 Export 按钮走 NSSavePanel 写 pretty JSON；结果摘要在列表顶部 inline 提示
 
 ## Preferences
 

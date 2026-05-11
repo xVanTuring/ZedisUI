@@ -10,6 +10,11 @@ struct LauncherView: View {
     @State private var quickConnecting: Bool = false
     @State private var quickError: String?
 
+    @State private var newGroupPresented: Bool = false
+    @State private var groupRenameTarget: ConnectionGroup?
+    @State private var collapsedGroups: Set<UUID> = []
+    @State private var importSummary: String?
+
     var body: some View {
         @Bindable var state = appState
 
@@ -49,6 +54,16 @@ struct LauncherView: View {
                 appState.updateConnection(updated)
             }
         }
+        .sheet(isPresented: $newGroupPresented) {
+            GroupNameSheet(title: "New Group", initialName: "") { name in
+                appState.addGroup(named: name)
+            }
+        }
+        .sheet(item: $groupRenameTarget) { group in
+            GroupNameSheet(title: "Rename Group", initialName: group.name) { name in
+                appState.renameGroup(group.id, to: name)
+            }
+        }
     }
 
     // MARK: - Side panel (brand + actions)
@@ -80,23 +95,31 @@ struct LauncherView: View {
                 .controlSize(.large)
 
                 Button {
-                    // Group support: deferred. Show a tooltip-style hint via alert?
-                    // For now we just no-op so the button keeps the visual rhythm.
+                    newGroupPresented = true
                 } label: {
                     Label("New Group…", systemImage: "folder.badge.plus")
                         .frame(maxWidth: .infinity)
                 }
                 .controlSize(.large)
-                .disabled(true)
-                .help("Coming soon")
 
-                Button {
-                    importConnections()
-                } label: {
-                    Label("Import…", systemImage: "square.and.arrow.down")
-                        .frame(maxWidth: .infinity)
+                HStack(spacing: 8) {
+                    Button {
+                        importConnections()
+                    } label: {
+                        Label("Import", systemImage: "square.and.arrow.down")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .controlSize(.large)
+
+                    Button {
+                        exportConnections()
+                    } label: {
+                        Label("Export", systemImage: "square.and.arrow.up")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .controlSize(.large)
+                    .disabled(appState.connections.isEmpty)
                 }
-                .controlSize(.large)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 24)
@@ -176,7 +199,23 @@ struct LauncherView: View {
                     .background(.quaternary, in: Capsule())
             }
 
-            if appState.connections.isEmpty {
+            if let importSummary {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                    Text(importSummary).font(.caption)
+                    Spacer()
+                    Button {
+                        self.importSummary = nil
+                    } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless)
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+            }
+
+            if appState.connections.isEmpty && appState.groups.isEmpty {
                 ContentUnavailableView {
                     Label("No saved connections", systemImage: "tray")
                 } description: {
@@ -186,20 +225,157 @@ struct LauncherView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 6) {
-                        ForEach(appState.connections) { conn in
-                            SavedConnectionRow(
-                                connection: conn,
-                                status: appState.sessions[conn.id]?.status,
-                                onConnect: { connect(conn) },
-                                onEdit: { appState.connectionBeingEdited = conn },
-                                onDelete: { appState.removeConnection(conn.id) }
+                        // Pinned bucket — only shown when something is pinned.
+                        let pinned = appState.connections
+                            .filter { $0.isPinned }
+                            .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+                        if !pinned.isEmpty {
+                            sectionHeader(
+                                title: "Pinned",
+                                icon: "pin.fill",
+                                count: pinned.count,
+                                collapsed: false,
+                                onToggle: nil,
+                                trailing: nil
                             )
+                            ForEach(pinned) { conn in rowFor(conn) }
+                        }
+
+                        // Each user-defined group.
+                        ForEach(appState.groups) { group in
+                            let members = appState.connections
+                                .filter { $0.groupId == group.id && !$0.isPinned }
+                                .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+                            let isCollapsed = collapsedGroups.contains(group.id)
+                            sectionHeader(
+                                title: group.name,
+                                icon: "folder",
+                                count: members.count,
+                                collapsed: isCollapsed,
+                                onToggle: {
+                                    if isCollapsed {
+                                        collapsedGroups.remove(group.id)
+                                    } else {
+                                        collapsedGroups.insert(group.id)
+                                    }
+                                },
+                                trailing: {
+                                    AnyView(
+                                        Menu {
+                                            Button("Rename…") { groupRenameTarget = group }
+                                            Button("Delete Group", role: .destructive) {
+                                                appState.removeGroup(group.id)
+                                            }
+                                        } label: {
+                                            Image(systemName: "ellipsis.circle")
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .menuStyle(.borderlessButton)
+                                        .menuIndicator(.hidden)
+                                        .fixedSize()
+                                    )
+                                }
+                            )
+                            if !isCollapsed {
+                                if members.isEmpty {
+                                    Text("Empty — move a connection here from its row menu.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
+                                } else {
+                                    ForEach(members) { conn in rowFor(conn) }
+                                }
+                            }
+                        }
+
+                        // Ungrouped bucket — only shown when groups exist, otherwise we
+                        // just render the flat list with no header.
+                        let ungrouped = appState.connections
+                            .filter { $0.groupId == nil && !$0.isPinned }
+                            .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+                        if !ungrouped.isEmpty {
+                            if !appState.groups.isEmpty {
+                                sectionHeader(
+                                    title: "Ungrouped",
+                                    icon: "tray",
+                                    count: ungrouped.count,
+                                    collapsed: false,
+                                    onToggle: nil,
+                                    trailing: nil
+                                )
+                            }
+                            ForEach(ungrouped) { conn in rowFor(conn) }
                         }
                     }
                     .padding(.bottom, 24)
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func rowFor(_ conn: Connection) -> some View {
+        SavedConnectionRow(
+            connection: conn,
+            status: appState.sessions[conn.id]?.status,
+            groups: appState.groups,
+            onConnect: { connect(conn) },
+            onEdit: { appState.connectionBeingEdited = conn },
+            onDelete: { appState.removeConnection(conn.id) },
+            // Read pin state from appState at click time, not from the
+            // captured `conn`, so a stale row prop can't double-pin or
+            // refuse to unpin if SwiftUI happens to reuse the row view.
+            onTogglePin: {
+                let current = appState.connections.first { $0.id == conn.id }?.isPinned ?? conn.isPinned
+                appState.setPinned(conn.id, !current)
+            },
+            onMoveToGroup: { gid in appState.moveConnection(conn.id, toGroup: gid) }
+        )
+        // Identity includes pin/group so SwiftUI doesn't reuse the
+        // row across sections with stale visuals.
+        .id("\(conn.id)-\(conn.isPinned)-\(conn.groupId?.uuidString ?? "none")")
+    }
+
+    @ViewBuilder
+    private func sectionHeader(
+        title: String,
+        icon: String,
+        count: Int,
+        collapsed: Bool,
+        onToggle: (() -> Void)?,
+        trailing: (() -> AnyView)?
+    ) -> some View {
+        HStack(spacing: 6) {
+            if let onToggle {
+                Button(action: onToggle) {
+                    Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12)
+                }
+                .buttonStyle(.plain)
+            } else {
+                Image(systemName: icon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 12)
+            }
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text("\(count)")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            Spacer()
+            if let trailing {
+                trailing()
+            }
+        }
+        .padding(.top, 6)
+        .padding(.horizontal, 4)
+        .contentShape(Rectangle())
+        .onTapGesture { onToggle?() }
     }
 
     // MARK: - Actions
@@ -234,17 +410,48 @@ struct LauncherView: View {
         do {
             let data = try Data(contentsOf: url)
             let imported = try JSONDecoder().decode([Connection].self, from: data)
+            let existingNames = Set(appState.connections.map { $0.name })
+            var added = 0
+            var skipped = 0
             for c in imported {
-                // Re-key so we don't collide with existing ids.
+                if existingNames.contains(c.name) {
+                    skipped += 1
+                    continue
+                }
+                // Re-key so we don't collide with existing ids. Clear
+                // group membership so imported items land in Ungrouped
+                // rather than dangling at a missing group id.
                 var copy = c
                 copy.id = UUID()
+                copy.groupId = nil
                 appState.addConnection(copy)
+                added += 1
             }
+            importSummary = "Imported \(added) connection\(added == 1 ? "" : "s")"
+                + (skipped > 0 ? " · skipped \(skipped) duplicate name\(skipped == 1 ? "" : "s")" : "")
         } catch {
-            // Surface a brief alert via NSAlert; cheaper than threading another
-            // @State error binding here.
             let alert = NSAlert()
             alert.messageText = "Could not import connections"
+            alert.informativeText = "The file isn't a recognized ZedisUI connections export.\n\n\(error.localizedDescription)"
+            alert.runModal()
+        }
+    }
+
+    private func exportConnections() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "zedisui-connections.json"
+        panel.title = "Export connections"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(appState.connections)
+            try data.write(to: url, options: .atomic)
+            importSummary = "Exported \(appState.connections.count) connection\(appState.connections.count == 1 ? "" : "s") to \(url.lastPathComponent)"
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Could not export connections"
             alert.informativeText = error.localizedDescription
             alert.runModal()
         }
@@ -256,11 +463,26 @@ struct LauncherView: View {
 private struct SavedConnectionRow: View {
     let connection: Connection
     let status: RedisSession.Status?
+    let groups: [ConnectionGroup]
     let onConnect: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
+    let onTogglePin: () -> Void
+    let onMoveToGroup: (UUID?) -> Void
 
     @State private var hovered = false
+    /// One-shot result of clicking the status dot. Overrides the
+    /// session-status colour while non-nil; never persisted. Reset to
+    /// `.idle` on connection edit (when the row's `connection.id` slot
+    /// gets re-bound) — see `.onChange` below.
+    @State private var probe: ProbeState = .idle
+
+    enum ProbeState: Equatable {
+        case idle
+        case running
+        case ok(String)     // PONG payload
+        case failed(String) // user-facing reason
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -274,6 +496,19 @@ private struct SavedConnectionRow: View {
                     .lineLimit(1)
             }
             Spacer()
+            // Single pin control: always visible when pinned (so users can
+            // unpin), only visible on hover when not pinned (so it doesn't
+            // clutter the row). Pin orange when active, secondary otherwise.
+            if connection.isPinned || hovered {
+                Button(action: onTogglePin) {
+                    Image(systemName: connection.isPinned ? "pin.fill" : "pin")
+                        .foregroundStyle(connection.isPinned ? Color.orange : Color.secondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(connection.isPinned ? "Unpin" : "Pin to top")
+            }
             Button("Edit", action: onEdit)
                 .controlSize(.regular)
             Button("Connect", action: onConnect)
@@ -292,34 +527,177 @@ private struct SavedConnectionRow: View {
             Button("Connect", action: onConnect)
             Button("Edit…", action: onEdit)
             Divider()
+            Button(connection.isPinned ? "Unpin" : "Pin to Top", action: onTogglePin)
+            Menu("Move to Group") {
+                Button("None (Ungrouped)") { onMoveToGroup(nil) }
+                    .disabled(connection.groupId == nil)
+                if !groups.isEmpty { Divider() }
+                ForEach(groups) { g in
+                    Button(g.name) { onMoveToGroup(g.id) }
+                        .disabled(connection.groupId == g.id)
+                }
+            }
+            .disabled(groups.isEmpty && connection.groupId == nil)
+            Divider()
             Button("Delete", role: .destructive, action: onDelete)
         }
     }
 
     private var statusDot: some View {
-        Circle()
-            .fill(statusColor)
-            .frame(width: 8, height: 8)
-            .help(statusTooltip)
+        Button(action: runProbe) {
+            ZStack {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 10, height: 10)
+                if case .running = probe {
+                    // Replace the dot with a tiny spinner while probing.
+                    ProgressView()
+                        .controlSize(.mini)
+                        .scaleEffect(0.55)
+                }
+            }
+            // Slightly larger hit area than the visual circle.
+            .frame(width: 22, height: 22)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled({ if case .running = probe { return true } else { return false } }())
+        .help(statusTooltip)
     }
 
+    /// Color resolution order: an in-flight or completed probe wins
+    /// over the longer-lived session status, so the user sees direct
+    /// feedback from the click. Session status fills in when the row
+    /// hasn't been probed.
     private var statusColor: Color {
-        switch status {
-        case .connected:    return .green
-        case .connecting:   return .yellow
-        case .failed:       return .red
-        case .disconnected, .none: return .gray.opacity(0.5)
+        switch probe {
+        case .ok:      return .green
+        case .failed:  return .red
+        case .running: return .yellow
+        case .idle:
+            switch status {
+            case .connected:    return .green
+            case .connecting:   return .yellow
+            case .failed:       return .red
+            case .disconnected, .none: return .gray.opacity(0.5)
+            }
         }
     }
 
     private var statusTooltip: String {
-        switch status {
-        case .connected:    return "Connected"
-        case .connecting:   return "Connecting…"
-        case .failed(let s): return "Failed: \(s)"
-        case .disconnected: return "Disconnected"
-        case .none:         return "Not connected"
+        switch probe {
+        case .ok(let pong):      return "OK · PING → \(pong) — click to retest"
+        case .failed(let msg):   return "Failed: \(msg) — click to retest"
+        case .running:           return "Testing…"
+        case .idle:
+            switch status {
+            case .connected:    return "Connected — click to retest"
+            case .connecting:   return "Connecting…"
+            case .failed(let s): return "Failed: \(s) — click to retest"
+            case .disconnected: return "Disconnected — click to test"
+            case .none:         return "Not connected — click to test"
+            }
         }
+    }
+
+    private func runProbe() {
+        if case .running = probe { return }
+        probe = .running
+        let connection = self.connection
+        Task {
+            let result = await ConnectionProbe.run(connection)
+            probe = result
+        }
+    }
+}
+
+/// One-shot "is this host alive" check used by `SavedConnectionRow`'s
+/// status dot. Mirrors `ConnectionDialogView.test()` but loads secrets
+/// from the Keychain instead of in-memory dialog state. Always
+/// shuts the socket down before returning so we don't leak listeners.
+private enum ConnectionProbe {
+    static func run(_ connection: Connection) async -> SavedConnectionRow.ProbeState {
+        var tunnel: SSHTunnelService?
+        var serviceHost = connection.host
+        var servicePort = connection.port
+        do {
+            if let cfg = connection.sshTunnel {
+                let credential = try sshCredential(for: connection, cfg: cfg)
+                let t = SSHTunnelService(
+                    sshHost: cfg.host,
+                    sshPort: cfg.port,
+                    username: cfg.username,
+                    credential: credential,
+                    targetHost: connection.host,
+                    targetPort: connection.port
+                )
+                let port = try await t.start()
+                tunnel = t
+                serviceHost = "127.0.0.1"
+                servicePort = port
+            }
+
+            let password = connection.savePassword
+                ? KeychainHelper.password(for: connection.id)
+                : nil
+            let svc = RedisService(
+                host: serviceHost,
+                port: servicePort,
+                username: connection.username,
+                password: password
+            )
+            try await svc.connect(initialDB: connection.defaultDB)
+            let pong = (try? await svc.ping()) ?? "?"
+            await svc.disconnect()
+            if let tunnel { await tunnel.stop() }
+            return .ok(pong)
+        } catch {
+            if let tunnel { await tunnel.stop() }
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    private static func sshCredential(
+        for connection: Connection,
+        cfg: SSHTunnelConfig
+    ) throws -> SSHTunnelService.AuthCredential {
+        switch cfg.authMethod {
+        case .password:
+            let pw = cfg.savePassword ? (KeychainHelper.sshPassword(for: connection.id) ?? "") : ""
+            return .password(pw)
+        case .privateKey:
+            let key = try readKey(cfg)
+            let passphrase = cfg.savePassphrase
+                ? KeychainHelper.sshPassphrase(for: connection.id)
+                : nil
+            return .privateKey(key: key, passphrase: passphrase)
+        }
+    }
+
+    private static func readKey(_ cfg: SSHTunnelConfig) throws -> String {
+        if let bookmark = cfg.privateKeyBookmark {
+            var stale = false
+            let url = try URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &stale
+            )
+            let started = url.startAccessingSecurityScopedResource()
+            defer { if started { url.stopAccessingSecurityScopedResource() } }
+            return try String(contentsOf: url, encoding: .utf8)
+        }
+        if let path = cfg.privateKeyPath {
+            return try String(
+                contentsOfFile: (path as NSString).expandingTildeInPath,
+                encoding: .utf8
+            )
+        }
+        throw NSError(
+            domain: "ZedisUI.SSH",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "No private key file selected."]
+        )
     }
 }
 
@@ -354,6 +732,48 @@ private struct SidebarBackground: View {
 /// Reaches the host NSWindow and runs `configure` once attached. Used to
 /// flip flags SwiftUI doesn't expose (e.g. `.fullSizeContentView`) — there
 /// is no SwiftUI-native modifier for those as of macOS 15.
+private struct GroupNameSheet: View {
+    let title: String
+    let initialName: String
+    let onSave: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+
+    init(title: String, initialName: String, onSave: @escaping (String) -> Void) {
+        self.title = title
+        self.initialName = initialName
+        self.onSave = onSave
+        self._name = State(initialValue: initialName)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title).font(.headline)
+            TextField("Group name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(commit)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Save", action: commit)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 360)
+    }
+
+    private func commit() {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        onSave(trimmed)
+        dismiss()
+    }
+}
+
 private struct WindowConfigurator: NSViewRepresentable {
     let configure: (NSWindow) -> Void
 

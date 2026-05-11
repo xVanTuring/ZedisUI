@@ -9,7 +9,6 @@ struct DetailView: View {
     @State private var renameDraft: String = ""
     @State private var pendingTTLEdit = false
     @State private var showTTLPopover = false
-    @State private var favorite: Bool = false
 
     var body: some View {
         Group {
@@ -37,7 +36,7 @@ struct DetailView: View {
         .task(id: session.selectedKey) { await reloadMeta() }
     }
 
-    // MARK: - Header (key name + heart + gear)
+    // MARK: - Header (key name + gear)
 
     private func headerBar(key: String, type: RedisKeyType) -> some View {
         HStack(alignment: .center, spacing: 8) {
@@ -46,14 +45,6 @@ struct DetailView: View {
                 .font(.system(.title3, weight: .semibold))
                 .onSubmit { Task { await commitRename(from: key) } }
             Spacer()
-            Button {
-                favorite.toggle()
-            } label: {
-                Image(systemName: favorite ? "heart.fill" : "heart")
-                    .foregroundStyle(favorite ? Color.red : Color.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Favorite")
 
             Menu {
                 Button("Copy Key Name") {
