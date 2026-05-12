@@ -40,6 +40,63 @@ final class AppState {
         guard let idx = connections.firstIndex(where: { $0.id == connection.id }) else { return }
         connections[idx] = connection
         ConnectionStore.shared.save(connections)
+
+        // Edits to a live connection should take effect right away — old
+        // host/port/auth/SSH settings on the in-memory session would
+        // otherwise stick around until the window is closed and reopened.
+        // Tear the session down here; SessionWindow observes
+        // `sessions[id]` and re-runs its connect flow (prompting for
+        // credentials again if the new config requires it).
+        if let existing = sessions[connection.id] {
+            Task { await existing.disconnect() }
+            sessions.removeValue(forKey: connection.id)
+        }
+    }
+
+    /// Creates a copy of an existing connection with a fresh UUID and a
+    /// disambiguated name (e.g. "Prod" → "Prod Copy" / "Prod Copy 2").
+    /// Any Keychain-backed secrets (Redis password, SSH password, SSH
+    /// passphrase) are duplicated under the new id so the copy works
+    /// without re-entering credentials. The clone keeps the source's
+    /// group membership but is never pinned.
+    @discardableResult
+    func duplicateConnection(_ id: Connection.ID) -> Connection? {
+        guard let source = connections.first(where: { $0.id == id }) else { return nil }
+        var copy = source
+        copy.id = UUID()
+        copy.name = uniqueName(basedOn: source.name)
+        copy.isPinned = false
+
+        // Mirror any persisted secrets onto the new id.
+        if source.passwordMode == .keychain,
+           let pw = KeychainHelper.password(for: source.id) {
+            KeychainHelper.setPassword(pw, for: copy.id)
+        }
+        if let ssh = source.sshTunnel {
+            if ssh.passwordMode == .keychain,
+               let pw = KeychainHelper.sshPassword(for: source.id) {
+                KeychainHelper.setSSHPassword(pw, for: copy.id)
+            }
+            if ssh.passphraseMode == .keychain,
+               let pp = KeychainHelper.sshPassphrase(for: source.id) {
+                KeychainHelper.setSSHPassphrase(pp, for: copy.id)
+            }
+        }
+
+        connections.append(copy)
+        ConnectionStore.shared.save(connections)
+        return copy
+    }
+
+    /// Returns a name like "Foo Copy" / "Foo Copy 2" that doesn't
+    /// collide with any existing connection in the list.
+    private func uniqueName(basedOn base: String) -> String {
+        let existing = Set(connections.map(\.name))
+        let candidate = "\(base) Copy"
+        if !existing.contains(candidate) { return candidate }
+        var n = 2
+        while existing.contains("\(candidate) \(n)") { n += 1 }
+        return "\(candidate) \(n)"
     }
 
     func removeConnection(_ id: Connection.ID) {
@@ -99,11 +156,17 @@ final class AppState {
 
     // MARK: - Session lifecycle
 
-    /// Returns the existing session for a connection, or creates and connects one on demand.
+    /// Returns the existing session for a connection, or creates and
+    /// connects one on demand. `credentials`, when provided, supplies
+    /// secrets for any modes marked `.askEachTime` — typically gathered
+    /// by the SessionWindow's credential prompt.
     @discardableResult
-    func session(for connection: Connection) async throws -> RedisSession {
+    func session(
+        for connection: Connection,
+        credentials: SessionCredentials? = nil
+    ) async throws -> RedisSession {
         if let existing = sessions[connection.id] { return existing }
-        let session = RedisSession(connection: connection)
+        let session = RedisSession(connection: connection, credentials: credentials)
         sessions[connection.id] = session
         try await session.connect()
         return session

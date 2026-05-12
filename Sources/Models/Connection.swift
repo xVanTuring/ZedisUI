@@ -1,5 +1,14 @@
 import Foundation
 
+/// How a connection's secret (Redis password, SSH password, SSH key
+/// passphrase) is supplied at connect time.
+enum CredentialMode: String, Codable, Hashable {
+    /// Stored in the macOS Keychain and loaded automatically.
+    case keychain
+    /// Never persisted; the user is prompted on each connect.
+    case askEachTime
+}
+
 /// A user-saved Redis connection profile.
 struct Connection: Identifiable, Codable, Hashable {
     var id: UUID
@@ -7,9 +16,11 @@ struct Connection: Identifiable, Codable, Hashable {
     var host: String
     var port: Int
     var username: String?
-    /// Password is NOT persisted in this struct; we keep it in the Keychain
-    /// keyed by `id`. The store loads it on demand when establishing a session.
-    var savePassword: Bool
+    /// How the Redis AUTH password is sourced. `nil` means no password
+    /// configured at all (server doesn't require AUTH). The password
+    /// itself is never stored in this struct — see Keychain / prompt
+    /// flow at connect time.
+    var passwordMode: CredentialMode?
     var defaultDB: Int
     /// Optional MATCH pattern to use when scanning keys.
     var defaultPattern: String
@@ -31,7 +42,7 @@ struct Connection: Identifiable, Codable, Hashable {
         host: String = "127.0.0.1",
         port: Int = 6379,
         username: String? = nil,
-        savePassword: Bool = false,
+        passwordMode: CredentialMode? = nil,
         defaultDB: Int = 0,
         defaultPattern: String = "*",
         sshTunnel: SSHTunnelConfig? = nil,
@@ -43,7 +54,7 @@ struct Connection: Identifiable, Codable, Hashable {
         self.host = host
         self.port = port
         self.username = username
-        self.savePassword = savePassword
+        self.passwordMode = passwordMode
         self.defaultDB = defaultDB
         self.defaultPattern = defaultPattern
         self.sshTunnel = sshTunnel
@@ -52,13 +63,16 @@ struct Connection: Identifiable, Codable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, host, port, username, savePassword, defaultDB
+        case id, name, host, port, username, passwordMode, defaultDB
         case defaultPattern, sshTunnel, isPinned, groupId
+        // Legacy keys (pre-0.3): the old Bool form of password storage.
+        case savePassword
     }
 
-    /// Decoding tolerates older payloads that predate `isPinned` /
-    /// `groupId`. New users get sensible defaults; existing stored
-    /// connections decode untouched.
+    /// Decoding tolerates older payloads:
+    ///   - missing `isPinned` / `groupId` (pre-grouping)
+    ///   - the old `savePassword: Bool` (pre-CredentialMode). `true`
+    ///     becomes `.keychain`, `false` becomes `nil` (no password).
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
@@ -66,12 +80,35 @@ struct Connection: Identifiable, Codable, Hashable {
         self.host = try c.decode(String.self, forKey: .host)
         self.port = try c.decode(Int.self, forKey: .port)
         self.username = try c.decodeIfPresent(String.self, forKey: .username)
-        self.savePassword = try c.decode(Bool.self, forKey: .savePassword)
+        if let mode = try c.decodeIfPresent(CredentialMode.self, forKey: .passwordMode) {
+            self.passwordMode = mode
+        } else if let legacy = try c.decodeIfPresent(Bool.self, forKey: .savePassword) {
+            self.passwordMode = legacy ? .keychain : nil
+        } else {
+            self.passwordMode = nil
+        }
         self.defaultDB = try c.decode(Int.self, forKey: .defaultDB)
         self.defaultPattern = try c.decode(String.self, forKey: .defaultPattern)
         self.sshTunnel = try c.decodeIfPresent(SSHTunnelConfig.self, forKey: .sshTunnel)
         self.isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         self.groupId = try c.decodeIfPresent(UUID.self, forKey: .groupId)
+    }
+
+    /// Custom encoder so we only emit the new `passwordMode` key and
+    /// never the legacy `savePassword`.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(host, forKey: .host)
+        try c.encode(port, forKey: .port)
+        try c.encodeIfPresent(username, forKey: .username)
+        try c.encodeIfPresent(passwordMode, forKey: .passwordMode)
+        try c.encode(defaultDB, forKey: .defaultDB)
+        try c.encode(defaultPattern, forKey: .defaultPattern)
+        try c.encodeIfPresent(sshTunnel, forKey: .sshTunnel)
+        try c.encode(isPinned, forKey: .isPinned)
+        try c.encodeIfPresent(groupId, forKey: .groupId)
     }
 }
 

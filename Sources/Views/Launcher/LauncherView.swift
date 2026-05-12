@@ -403,6 +403,7 @@ struct LauncherView: View {
             groups: appState.groups,
             onConnect: { connect(conn) },
             onEdit: { appState.connectionBeingEdited = conn },
+            onDuplicate: { appState.duplicateConnection(conn.id) },
             onDelete: { appState.removeConnection(conn.id) },
             // Read pin state from appState at click time, not from the
             // captured `conn`, so a stale row prop can't double-pin or
@@ -545,15 +546,15 @@ struct LauncherView: View {
             appState.addConnection(copy)
 
             if let bundle = secretsById[oldId] {
-                if let pw = bundle.redisPassword, copy.savePassword {
+                if let pw = bundle.redisPassword, copy.passwordMode == .keychain {
                     KeychainHelper.setPassword(pw, for: copy.id)
                 }
                 if let pw = bundle.sshPassword,
-                   let ssh = copy.sshTunnel, ssh.savePassword {
+                   let ssh = copy.sshTunnel, ssh.passwordMode == .keychain {
                     KeychainHelper.setSSHPassword(pw, for: copy.id)
                 }
                 if let pp = bundle.sshPassphrase,
-                   let ssh = copy.sshTunnel, ssh.savePassphrase {
+                   let ssh = copy.sshTunnel, ssh.passphraseMode == .keychain {
                     KeychainHelper.setSSHPassphrase(pp, for: copy.id)
                 }
             }
@@ -617,16 +618,19 @@ struct LauncherView: View {
             let secrets: [ExportPayload.SecretBundle] = appState.connections.compactMap { conn in
                 var bundle = ExportPayload.SecretBundle(connectionId: conn.id)
                 var anything = false
-                if conn.savePassword, let pw = KeychainHelper.password(for: conn.id) {
+                if conn.passwordMode == .keychain,
+                   let pw = KeychainHelper.password(for: conn.id) {
                     bundle.redisPassword = pw
                     anything = true
                 }
                 if let ssh = conn.sshTunnel {
-                    if ssh.savePassword, let pw = KeychainHelper.sshPassword(for: conn.id) {
+                    if ssh.passwordMode == .keychain,
+                       let pw = KeychainHelper.sshPassword(for: conn.id) {
                         bundle.sshPassword = pw
                         anything = true
                     }
-                    if ssh.savePassphrase, let pp = KeychainHelper.sshPassphrase(for: conn.id) {
+                    if ssh.passphraseMode == .keychain,
+                       let pp = KeychainHelper.sshPassphrase(for: conn.id) {
                         bundle.sshPassphrase = pp
                         anything = true
                     }
@@ -658,6 +662,7 @@ private struct SavedConnectionRow: View {
     let groups: [ConnectionGroup]
     let onConnect: () -> Void
     let onEdit: () -> Void
+    let onDuplicate: () -> Void
     let onDelete: () -> Void
     let onTogglePin: () -> Void
     let onMoveToGroup: (UUID?) -> Void
@@ -718,6 +723,7 @@ private struct SavedConnectionRow: View {
         .contextMenu {
             Button("Connect", action: onConnect)
             Button("Edit…", action: onEdit)
+            Button("Duplicate", action: onDuplicate)
             Divider()
             Button(connection.isPinned ? "Unpin" : "Pin to Top", action: onTogglePin)
             Menu("Move to Group") {
@@ -829,7 +835,11 @@ private enum ConnectionProbe {
                 servicePort = port
             }
 
-            let password = connection.savePassword
+            // The launcher's dot is a quick "is the host alive" check —
+            // it deliberately doesn't pop the credential prompt for
+            // `.askEachTime` connections, so those will probe without
+            // auth (and likely fail with red, which is fine).
+            let password = (connection.passwordMode == .keychain)
                 ? KeychainHelper.password(for: connection.id)
                 : nil
             let svc = RedisService(
@@ -855,11 +865,13 @@ private enum ConnectionProbe {
     ) throws -> SSHTunnelService.AuthCredential {
         switch cfg.authMethod {
         case .password:
-            let pw = cfg.savePassword ? (KeychainHelper.sshPassword(for: connection.id) ?? "") : ""
+            let pw = (cfg.passwordMode == .keychain)
+                ? (KeychainHelper.sshPassword(for: connection.id) ?? "")
+                : ""
             return .password(pw)
         case .privateKey:
             let key = try readKey(cfg)
-            let passphrase = cfg.savePassphrase
+            let passphrase = (cfg.passphraseMode == .keychain)
                 ? KeychainHelper.sshPassphrase(for: connection.id)
                 : nil
             return .privateKey(key: key, passphrase: passphrase)

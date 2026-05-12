@@ -4,12 +4,25 @@ import SwiftUI
 struct SessionWindow: View {
     let connection: Connection
     @Environment(AppState.self) private var appState
-    @State private var session: RedisSession?
     @State private var failure: String?
+    @State private var credentialPrompt: CredentialPromptRequest?
+    /// True while `ensureSession` is mid-flight. Without this, the
+    /// `.task(id:)` re-fires while we're still trying to connect (the
+    /// dictionary entry only appears after `session(for:)` returns),
+    /// kicking off duplicate connects and stacking duplicate prompts.
+    @State private var connecting: Bool = false
+
+    /// Always read the freshest copy of the connection from AppState —
+    /// the value captured in the WindowGroup is a snapshot from when the
+    /// window first opened and may be stale after the user edits the
+    /// profile.
+    private var currentConnection: Connection {
+        appState.connections.first(where: { $0.id == connection.id }) ?? connection
+    }
 
     var body: some View {
         Group {
-            if let session {
+            if let session = appState.sessions[connection.id] {
                 SessionContent(session: session)
             } else if let failure {
                 ContentUnavailableView(
@@ -20,26 +33,171 @@ struct SessionWindow: View {
                 .navigationTitle(connection.name)
                 .navigationSubtitle("\(connection.host):\(connection.port) · Failed")
             } else {
-                ProgressView("Connecting to \(connection.host):\(connection.port)…")
+                ProgressView("Connecting to \(currentConnection.host):\(currentConnection.port)…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .navigationTitle(connection.name)
-                    .navigationSubtitle("\(connection.host):\(connection.port) · Connecting…")
+                    .navigationTitle(currentConnection.name)
+                    .navigationSubtitle("\(currentConnection.host):\(currentConnection.port) · Connecting…")
             }
         }
-        .task { await ensureSession() }
+        // The id flips whenever the session entry appears/disappears.
+        // That covers both the initial open and the post-edit reload
+        // path (AppState.updateConnection drops the session).
+        .task(id: appState.sessions[connection.id] == nil) {
+            await ensureSession()
+        }
+        .sheet(item: $credentialPrompt) { request in
+            CredentialPromptSheet(request: request) { creds in
+                credentialPrompt = nil
+                Task { await performConnect(credentials: creds) }
+            } onCancel: {
+                credentialPrompt = nil
+            }
+        }
     }
 
     private func ensureSession() async {
-        if let existing = appState.sessions[connection.id] {
-            session = existing
+        guard appState.sessions[connection.id] == nil else { return }
+        guard !connecting else { return }
+        // Don't auto-retry while the prompt is already on screen waiting
+        // for the user — they'd see it flash open again as soon as they
+        // hit Cancel and the dict re-evaluates.
+        guard credentialPrompt == nil else { return }
+        let latest = currentConnection
+        if let request = CredentialPromptRequest.requirements(for: latest) {
+            credentialPrompt = request
             return
         }
+        await performConnect(credentials: nil)
+    }
+
+    private func performConnect(credentials: SessionCredentials?) async {
+        connecting = true
+        defer { connecting = false }
+        failure = nil
         do {
-            let s = try await appState.session(for: connection)
-            session = s
+            _ = try await appState.session(for: currentConnection, credentials: credentials)
         } catch {
-            failure = error.localizedDescription
+            // For ask-each-time connections, a failed connect after the
+            // user typed credentials is almost always a wrong password.
+            // Drop the failed session entry and re-show the prompt with
+            // the error message so they can retry without closing the
+            // window.
+            let latest = currentConnection
+            if credentials != nil,
+               let retry = CredentialPromptRequest.requirements(
+                   for: latest,
+                   error: error.localizedDescription
+               ) {
+                await appState.disconnect(connection.id)
+                credentialPrompt = retry
+            } else {
+                failure = error.localizedDescription
+            }
         }
+    }
+}
+
+// MARK: - Credential prompt
+
+/// Identifies which secrets the current connect needs the user to
+/// provide. Built from `CredentialPromptRequest.requirements(for:)` so
+/// the SessionWindow only opens the sheet when at least one credential
+/// mode is `.askEachTime`.
+private struct CredentialPromptRequest: Identifiable {
+    let id = UUID()
+    let connectionName: String
+    let needsRedisPassword: Bool
+    let needsSSHPassword: Bool
+    let needsSSHPassphrase: Bool
+    /// Optional error from the previous attempt. When non-nil the
+    /// sheet shows it above the fields so the user knows why they're
+    /// being asked again (typically wrong password).
+    let error: String?
+
+    static func requirements(
+        for connection: Connection,
+        error: String? = nil
+    ) -> CredentialPromptRequest? {
+        let redis = connection.passwordMode == .askEachTime
+        var ssh = false
+        var passphrase = false
+        if let cfg = connection.sshTunnel {
+            switch cfg.authMethod {
+            case .password:
+                ssh = cfg.passwordMode == .askEachTime
+            case .privateKey:
+                passphrase = cfg.passphraseMode == .askEachTime
+            }
+        }
+        guard redis || ssh || passphrase else { return nil }
+        return CredentialPromptRequest(
+            connectionName: connection.name,
+            needsRedisPassword: redis,
+            needsSSHPassword: ssh,
+            needsSSHPassphrase: passphrase,
+            error: error
+        )
+    }
+}
+
+private struct CredentialPromptSheet: View {
+    let request: CredentialPromptRequest
+    let onSubmit: (SessionCredentials) -> Void
+    let onCancel: () -> Void
+
+    @State private var redisPassword: String = ""
+    @State private var sshPassword: String = ""
+    @State private var sshPassphrase: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Credentials for \(request.connectionName)")
+                .font(.headline)
+            Text("These secrets are used for this connect only and aren't saved.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let msg = request.error {
+                Label(msg, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Form {
+                if request.needsSSHPassword {
+                    SecureField("SSH Password", text: $sshPassword)
+                }
+                if request.needsSSHPassphrase {
+                    SecureField("SSH Key Passphrase", text: $sshPassphrase)
+                }
+                if request.needsRedisPassword {
+                    SecureField("Redis Password", text: $redisPassword)
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("Connect", action: submit)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 380)
+    }
+
+    private func submit() {
+        var creds = SessionCredentials()
+        if request.needsRedisPassword { creds.redisPassword = redisPassword }
+        if request.needsSSHPassword { creds.sshPassword = sshPassword }
+        if request.needsSSHPassphrase { creds.sshPassphrase = sshPassphrase }
+        onSubmit(creds)
     }
 }
 

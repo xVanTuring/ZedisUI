@@ -85,9 +85,17 @@ final class RedisSession {
     /// of the selected key's editor. Mutually exclusive with `selectedKey`.
     var commandQueryActive: Bool = false
 
-    init(connection: Connection) {
+    init(connection: Connection, credentials: SessionCredentials? = nil) {
         self.connection = connection
-        let password = connection.savePassword ? KeychainHelper.password(for: connection.id) : nil
+        let password: String?
+        switch connection.passwordMode {
+        case .keychain:
+            password = KeychainHelper.password(for: connection.id)
+        case .askEachTime:
+            password = credentials?.redisPassword
+        case .none:
+            password = nil
+        }
         let history = CommandHistory()
         self.history = history
         self.service = RedisService(
@@ -103,7 +111,7 @@ final class RedisSession {
                 }
             }
         )
-        self.tunnel = Self.makeTunnel(for: connection)
+        self.tunnel = Self.makeTunnel(for: connection, credentials: credentials)
         self.currentDB = connection.defaultDB
         // The connection's saved default of "*" is presented as an empty
         // search field; any other custom pattern is shown verbatim.
@@ -195,22 +203,38 @@ final class RedisSession {
 
     // MARK: - SSH tunnel construction
 
-    /// Builds an `SSHTunnelService` from the connection's stored config and
-    /// Keychain-resident secrets. Returns nil if SSH is not configured, or
-    /// if required saved secrets are missing (the connect will then surface
-    /// a clear error). Never throws — credential errors surface at start().
-    private static func makeTunnel(for connection: Connection) -> SSHTunnelService? {
+    /// Builds an `SSHTunnelService` from the connection's stored config,
+    /// pulling each secret either from the Keychain (mode == .keychain)
+    /// or from the in-memory `credentials` the caller supplied
+    /// (mode == .askEachTime). Returns nil if SSH is not configured.
+    /// Never throws — credential errors surface at start().
+    private static func makeTunnel(
+        for connection: Connection,
+        credentials: SessionCredentials?
+    ) -> SSHTunnelService? {
         guard let cfg = connection.sshTunnel else { return nil }
         let credential: SSHTunnelService.AuthCredential
         switch cfg.authMethod {
         case .password:
-            let pw = cfg.savePassword ? (KeychainHelper.sshPassword(for: connection.id) ?? "") : ""
+            let pw: String
+            switch cfg.passwordMode {
+            case .keychain:
+                pw = KeychainHelper.sshPassword(for: connection.id) ?? ""
+            case .askEachTime:
+                pw = credentials?.sshPassword ?? ""
+            }
             credential = .password(pw)
         case .privateKey:
             let keyContents = (try? Self.readPrivateKey(cfg)) ?? ""
-            let passphrase: String? = cfg.savePassphrase
-                ? KeychainHelper.sshPassphrase(for: connection.id)
-                : nil
+            let passphrase: String?
+            switch cfg.passphraseMode {
+            case .keychain:
+                passphrase = KeychainHelper.sshPassphrase(for: connection.id)
+            case .askEachTime:
+                passphrase = credentials?.sshPassphrase
+            case .none:
+                passphrase = nil
+            }
             credential = .privateKey(key: keyContents, passphrase: passphrase)
         }
         return SSHTunnelService(
@@ -405,6 +429,18 @@ final class RedisSession {
             status = .failed(error.localizedDescription)
         }
     }
+}
+
+// MARK: - Session credentials
+
+/// One-shot bag of secrets the user just typed into the credential
+/// prompt. Used to bootstrap a session when one or more credentials
+/// are marked `.askEachTime`. Not persisted anywhere — lives only as
+/// long as the in-flight connect.
+struct SessionCredentials {
+    var redisPassword: String?
+    var sshPassword: String?
+    var sshPassphrase: String?
 }
 
 // MARK: - Inspector target

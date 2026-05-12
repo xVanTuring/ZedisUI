@@ -20,6 +20,14 @@ struct ConnectionDialogView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft: Connection
     @State private var password: String = ""
+    /// Toggle that enables/disables the Redis password row. Driven by
+    /// `draft.passwordMode != nil`; flipping it on defaults the mode to
+    /// `.keychain`, off clears the mode + clears the typed password.
+    @State private var passwordEnabled: Bool = false
+    /// Drives the "what is Username?" popover anchored on the info icon.
+    /// SwiftUI's `.help()` doesn't reliably fire on small Images, so we
+    /// use an explicit click-to-show popover instead.
+    @State private var usernameHintShown: Bool = false
 
     // SSH tunnel — kept as separate UI state so the user can toggle
     // it on/off without losing what they typed.
@@ -27,6 +35,9 @@ struct ConnectionDialogView: View {
     @State private var sshDraft: SSHTunnelConfig = SSHTunnelConfig()
     @State private var sshPassword: String = ""
     @State private var sshPassphrase: String = ""
+    /// Toggle that enables/disables the passphrase row for private-key
+    /// auth. Mirrors `sshDraft.passphraseMode != nil`.
+    @State private var sshPassphraseEnabled: Bool = false
     @State private var keyPickerPresented: Bool = false
 
     @State private var testStatus: TestStatus = .idle
@@ -70,12 +81,53 @@ struct ConnectionDialogView: View {
                             Spacer()
                         }
                     }
-                    TextField("Username (Redis 6+ ACL, optional)", text: Binding(
-                        get: { draft.username ?? "" },
-                        set: { draft.username = $0.isEmpty ? nil : $0 }
+                    LabeledContent {
+                        HStack(spacing: 6) {
+                            TextField("", text: Binding(
+                                get: { draft.username ?? "" },
+                                set: { draft.username = $0.isEmpty ? nil : $0 }
+                            ))
+                            .labelsHidden()
+                            Button {
+                                usernameHintShown.toggle()
+                            } label: {
+                                Image(systemName: "info.circle")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .popover(isPresented: $usernameHintShown, arrowEdge: .top) {
+                                Text("Optional. Used for Redis 6+ ACL authentication.")
+                                    .font(.callout)
+                                    .padding(12)
+                                    .frame(maxWidth: 260)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    } label: {
+                        Text("Username")
+                    }
+                    Toggle("Requires password", isOn: Binding(
+                        get: { passwordEnabled },
+                        set: { enabled in
+                            passwordEnabled = enabled
+                            if enabled {
+                                if draft.passwordMode == nil { draft.passwordMode = .keychain }
+                            } else {
+                                draft.passwordMode = nil
+                                password = ""
+                            }
+                        }
                     ))
-                    SecureField("Password (optional)", text: $password)
-                    Toggle("Save password in Keychain", isOn: $draft.savePassword)
+                    if passwordEnabled {
+                        credentialRow(
+                            label: "Password",
+                            secret: $password,
+                            mode: Binding(
+                                get: { draft.passwordMode ?? .keychain },
+                                set: { draft.passwordMode = $0 }
+                            )
+                        )
+                    }
                     TextField("Default key pattern", text: $draft.defaultPattern)
                 }
 
@@ -161,8 +213,11 @@ struct ConnectionDialogView: View {
 
         switch sshDraft.authMethod {
         case .password:
-            SecureField("SSH Password", text: $sshPassword)
-            Toggle("Save SSH password in Keychain", isOn: $sshDraft.savePassword)
+            credentialRow(
+                label: "SSH Password",
+                secret: $sshPassword,
+                mode: $sshDraft.passwordMode
+            )
         case .privateKey:
             HStack {
                 Text("Key file:")
@@ -173,8 +228,56 @@ struct ConnectionDialogView: View {
                 Spacer()
                 Button("Choose…") { keyPickerPresented = true }
             }
-            SecureField("Passphrase (if key is encrypted)", text: $sshPassphrase)
-            Toggle("Save passphrase in Keychain", isOn: $sshDraft.savePassphrase)
+            Toggle("Key is encrypted (passphrase)", isOn: Binding(
+                get: { sshPassphraseEnabled },
+                set: { enabled in
+                    sshPassphraseEnabled = enabled
+                    if enabled {
+                        if sshDraft.passphraseMode == nil { sshDraft.passphraseMode = .keychain }
+                    } else {
+                        sshDraft.passphraseMode = nil
+                        sshPassphrase = ""
+                    }
+                }
+            ))
+            if sshPassphraseEnabled {
+                credentialRow(
+                    label: "Passphrase",
+                    secret: $sshPassphrase,
+                    mode: Binding(
+                        get: { sshDraft.passphraseMode ?? .keychain },
+                        set: { sshDraft.passphraseMode = $0 }
+                    )
+                )
+            }
+        }
+    }
+
+    /// One labeled row holding a SecureField + a compact storage-mode
+    /// dropdown to its right. Shared by all three credential rows (Redis
+    /// password / SSH password / SSH key passphrase). When the mode is
+    /// `.askEachTime` the field is disabled and shows a placeholder, so
+    /// it's visually obvious nothing typed here will be persisted.
+    @ViewBuilder
+    private func credentialRow(
+        label: String,
+        secret: Binding<String>,
+        mode: Binding<CredentialMode>
+    ) -> some View {
+        let ask = mode.wrappedValue == .askEachTime
+        LabeledContent(label) {
+            HStack(spacing: 8) {
+                SecureField(ask ? "Asked at connect time" : "", text: secret)
+                    .labelsHidden()
+                    .disabled(ask)
+                Picker("", selection: mode) {
+                    Text("Keychain").tag(CredentialMode.keychain)
+                    Text("Ask").tag(CredentialMode.askEachTime)
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(width: 100)
+            }
         }
     }
 
@@ -204,16 +307,18 @@ struct ConnectionDialogView: View {
 
     private func loadInitialSecrets() {
         if case .edit(let existing) = mode {
-            if existing.savePassword {
+            passwordEnabled = existing.passwordMode != nil
+            if existing.passwordMode == .keychain {
                 password = KeychainHelper.password(for: existing.id) ?? ""
             }
             if let cfg = existing.sshTunnel {
                 sshEnabled = true
                 sshDraft = cfg
-                if cfg.savePassword {
+                if cfg.passwordMode == .keychain {
                     sshPassword = KeychainHelper.sshPassword(for: existing.id) ?? ""
                 }
-                if cfg.savePassphrase {
+                sshPassphraseEnabled = cfg.passphraseMode != nil
+                if cfg.passphraseMode == .keychain {
                     sshPassphrase = KeychainHelper.sshPassphrase(for: existing.id) ?? ""
                 }
             }
@@ -250,7 +355,7 @@ struct ConnectionDialogView: View {
                 host: serviceHost,
                 port: servicePort,
                 username: draft.username,
-                password: password.isEmpty ? nil : password
+                password: passwordEnabled && !password.isEmpty ? password : nil
             )
             try await svc.connect(initialDB: draft.defaultDB)
             let pong = (try? await svc.ping()) ?? "?"
@@ -271,7 +376,7 @@ struct ConnectionDialogView: View {
             return .password(sshPassword)
         case .privateKey:
             let key = try readKeyFileNow()
-            let pass = sshPassphrase.isEmpty ? nil : sshPassphrase
+            let pass = (sshPassphraseEnabled && !sshPassphrase.isEmpty) ? sshPassphrase : nil
             return .privateKey(key: key, passphrase: pass)
         }
     }
@@ -309,10 +414,17 @@ struct ConnectionDialogView: View {
     // MARK: - Commit
 
     private func commit() {
-        // Redis password
-        if draft.savePassword && !password.isEmpty {
-            KeychainHelper.setPassword(password, for: draft.id)
-        } else if !draft.savePassword {
+        // Redis password — persist to Keychain only when mode == .keychain.
+        // For .askEachTime we explicitly wipe any stale entry. For "none"
+        // (toggle off / passwordMode == nil) we also wipe.
+        switch draft.passwordMode {
+        case .keychain:
+            if !password.isEmpty {
+                KeychainHelper.setPassword(password, for: draft.id)
+            } else {
+                KeychainHelper.deletePassword(for: draft.id)
+            }
+        case .askEachTime, .none:
             KeychainHelper.deletePassword(for: draft.id)
         }
 
@@ -321,16 +433,26 @@ struct ConnectionDialogView: View {
             draft.sshTunnel = sshDraft
             switch sshDraft.authMethod {
             case .password:
-                if sshDraft.savePassword && !sshPassword.isEmpty {
-                    KeychainHelper.setSSHPassword(sshPassword, for: draft.id)
-                } else {
+                switch sshDraft.passwordMode {
+                case .keychain:
+                    if !sshPassword.isEmpty {
+                        KeychainHelper.setSSHPassword(sshPassword, for: draft.id)
+                    } else {
+                        KeychainHelper.deleteSSHPassword(for: draft.id)
+                    }
+                case .askEachTime:
                     KeychainHelper.deleteSSHPassword(for: draft.id)
                 }
                 KeychainHelper.deleteSSHPassphrase(for: draft.id)
             case .privateKey:
-                if sshDraft.savePassphrase && !sshPassphrase.isEmpty {
-                    KeychainHelper.setSSHPassphrase(sshPassphrase, for: draft.id)
-                } else {
+                switch sshDraft.passphraseMode {
+                case .keychain:
+                    if !sshPassphrase.isEmpty {
+                        KeychainHelper.setSSHPassphrase(sshPassphrase, for: draft.id)
+                    } else {
+                        KeychainHelper.deleteSSHPassphrase(for: draft.id)
+                    }
+                case .askEachTime, .none:
                     KeychainHelper.deleteSSHPassphrase(for: draft.id)
                 }
                 KeychainHelper.deleteSSHPassword(for: draft.id)

@@ -197,7 +197,7 @@ struct ConnectionDetailView: View {
             rows.append(.init(name: "Username", value: u))
         }
         rows.append(.init(name: "Default DB", value: String(connection.defaultDB)))
-        rows.append(.init(name: "Save password", value: connection.savePassword ? "Yes" : "No"))
+        rows.append(.init(name: "Password", value: passwordModeLabel(connection.passwordMode)))
         rows.append(.init(name: "Default pattern", value: connection.defaultPattern))
         if let ssh = connection.sshTunnel {
             rows.append(.init(name: "SSH Tunnel", value: "\(ssh.username)@\(ssh.host):\(ssh.port)"))
@@ -236,6 +236,14 @@ struct ConnectionDetailView: View {
         switch ssh.authMethod {
         case .password:    return "password"
         case .privateKey:  return "private-key (\(ssh.privateKeyPath ?? "—"))"
+        }
+    }
+
+    private func passwordModeLabel(_ mode: CredentialMode?) -> String {
+        switch mode {
+        case .keychain:    return "Saved in Keychain"
+        case .askEachTime: return "Ask each time"
+        case .none:        return "None"
         }
     }
 
