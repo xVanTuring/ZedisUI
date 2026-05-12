@@ -4,6 +4,16 @@ import Foundation
 @preconcurrency import RediStack
 import Logging
 
+/// One row of `SLOWLOG GET`. Top-level so the view layer can render it
+/// without crossing the actor isolation boundary with `RESPValue`.
+struct SlowLogEntry: Identifiable, Hashable {
+    let id: Int
+    let timestampSeconds: Int
+    let durationMicros: Int
+    let command: String
+    let client: String?
+}
+
 /// Thin async wrapper around RediStack's `RedisConnection` providing the command
 /// surface the UI needs. One instance == one TCP connection to one Redis server.
 ///
@@ -160,6 +170,28 @@ actor RedisService {
             reply = try await raw("INFO")
         }
         return reply.string ?? ""
+    }
+
+    /// SLOWLOG GET → already-Sendable rows. Parsing happens inside the
+    /// actor so the non-Sendable `RESPValue` doesn't leak across.
+    func slowLog(count: Int = 128) async throws -> [SlowLogEntry] {
+        let reply = try await raw("SLOWLOG", ["GET", String(count)])
+        guard let entries = reply.array else { return [] }
+        return entries.compactMap { e -> SlowLogEntry? in
+            guard let row = e.array, row.count >= 4 else { return nil }
+            let id = Int(row[0].int ?? 0)
+            let ts = Int(row[1].int ?? 0)
+            let dur = Int(row[2].int ?? 0)
+            let cmdParts: [String] = row[3].array?.compactMap(\.string) ?? []
+            let client: String? = (row.count > 4) ? row[4].string : nil
+            return SlowLogEntry(
+                id: id,
+                timestampSeconds: ts,
+                durationMicros: dur,
+                command: cmdParts.joined(separator: " "),
+                client: client
+            )
+        }
     }
 
     /// Parses `redis_version` out of `INFO server`. Returns nil if missing.
