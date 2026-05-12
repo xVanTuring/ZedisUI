@@ -103,21 +103,10 @@ private struct SessionContent: View {
                 }
                 .help("New key")
             }
-            // Native NSSearchField, principal slot — lands between the
-            // window title (rendered in `.navigationTitle`) and the trailing
-            // primaryAction items. The magnifier icon's built-in menu
-            // (`searchMenuTemplate`) doubles as the type filter.
-            ToolbarItem(placement: .principal) {
-                NativeSearchField(
-                    text: $session.pattern,
-                    typeFilter: $session.typeFilter,
-                    prompt: "Search keys",
-                    jsonSupported: session.jsonSupported
-                ) {
-                    Task { await session.reloadKeys() }
-                }
-                .frame(width: 240)
-            }
+            // Search field lives at the top of the sidebar instead of
+            // here — macOS NSToolbar's `.principal` slot doesn't flex,
+            // and the sidebar VStack gives the field true column-width
+            // flex sizing.
 
             ToolbarItem(placement: .primaryAction) {
                 ConnectionStatusButton(session: session)

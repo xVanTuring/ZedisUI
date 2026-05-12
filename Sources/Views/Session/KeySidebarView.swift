@@ -26,9 +26,25 @@ struct KeySidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Sidebar-hosted instead of the toolbar `.principal` slot
+            // because macOS NSToolbar's principal placement doesn't
+            // stretch to fill horizontal space — see commit history.
+            // SwiftUI's natural VStack layout gives this true flex width
+            // tied to the sidebar column.
+            NativeSearchField(
+                text: $session.pattern,
+                typeFilter: $session.typeFilter,
+                prompt: "Search keys",
+                jsonSupported: session.jsonSupported
+            ) {
+                Task { await session.reloadKeys() }
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
+
             terminalRow
                 .padding(.horizontal, 10)
-                .padding(.top, 10)
                 .padding(.bottom, 8)
 
             scannedHeader
@@ -413,7 +429,7 @@ struct NativeSearchField: NSViewRepresentable {
     var onSubmit: () -> Void = {}
 
     func makeNSView(context: Context) -> NSSearchField {
-        let field = NSSearchField()
+        let field = WideHitSearchField()
         field.placeholderString = prompt
         field.bezelStyle = .roundedBezel
         field.delegate = context.coordinator
@@ -421,42 +437,64 @@ struct NativeSearchField: NSViewRepresentable {
         field.action = #selector(Coordinator.submit(_:))
         field.sendsWholeSearchString = true
         field.sendsSearchStringImmediately = false
+        // NSTextFieldCell defaults to `isScrollable = false`, which means
+        // once the typed string outgrows the visible width the editor
+        // simply clips it — cursor can't follow past the right edge and
+        // arrow keys feel broken. Single-line + scrollable + no-wrap is
+        // the standard combo that lets the field editor scroll its
+        // content horizontally as the cursor moves.
+        if let cell = field.cell as? NSTextFieldCell {
+            cell.usesSingleLineMode = true
+            cell.wraps = false
+            cell.isScrollable = true
+            cell.lineBreakMode = .byClipping
+        }
         field.searchMenuTemplate = context.coordinator.makeMenu()
-        applySearchIcon(to: field, active: !typeFilter.isEmpty)
+        // Capture the system-supplied magnifier-with-chevron image now,
+        // _after_ assigning a menu (NSSearchField swaps between with-arrow
+        // and without-arrow variants based on whether a menu exists).
+        if let cell = field.cell as? NSSearchFieldCell {
+            context.coordinator.defaultIcon = cell.searchButtonCell?.image
+        }
+        applySearchIcon(to: field, active: !typeFilter.isEmpty,
+                        defaultIcon: context.coordinator.defaultIcon)
         return field
     }
 
     func updateNSView(_ field: NSSearchField, context: Context) {
-        context.coordinator.parent = self
+        let coord = context.coordinator
+        coord.parent = self
         if field.stringValue != text {
             field.stringValue = text
         }
-        field.placeholderString = prompt
-        // Rebuild so checkmarks reflect the current `typeFilter`.
-        field.searchMenuTemplate = context.coordinator.makeMenu()
-        applySearchIcon(to: field, active: !typeFilter.isEmpty)
+        if field.placeholderString != prompt {
+            field.placeholderString = prompt
+        }
+        // Only rebuild the menu / re-tint the icon when filter state
+        // actually changes. Doing this on every keystroke poked the
+        // search field's internal editor and broke horizontal cursor
+        // scrolling once the typed string got longer than the field.
+        if coord.lastTypeFilter != typeFilter || coord.lastJsonSupported != jsonSupported {
+            field.searchMenuTemplate = coord.makeMenu()
+            applySearchIcon(to: field, active: !typeFilter.isEmpty,
+                            defaultIcon: coord.defaultIcon)
+            coord.lastTypeFilter = typeFilter
+            coord.lastJsonSupported = jsonSupported
+        }
     }
 
-    /// Swap the magnifier glyph for an accent-tinted filled variant when
-    /// any type filter is active, so the icon doubles as a "filter on" cue.
-    private func applySearchIcon(to field: NSSearchField, active: Bool) {
+    /// Keep AppKit's default magnifier+chevron glyph (so users still see
+    /// the dropdown affordance), but tint it with the accent color when
+    /// any type filter is active.
+    private func applySearchIcon(to field: NSSearchField, active: Bool, defaultIcon: NSImage?) {
         guard let cell = field.cell as? NSSearchFieldCell,
-              let button = cell.searchButtonCell
-        else { return }
-        let symbolName = active ? "line.3.horizontal.decrease.circle.fill" : "magnifyingglass"
-        let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
-        guard let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
-            .withSymbolConfiguration(config)
+              let button = cell.searchButtonCell,
+              let base = defaultIcon
         else { return }
         if active {
-            image.isTemplate = false
-            let tinted = image.withSymbolConfiguration(
-                NSImage.SymbolConfiguration(paletteColors: [.controlAccentColor])
-            )
-            button.image = tinted ?? image
+            button.image = base.tinted(with: .controlAccentColor)
         } else {
-            image.isTemplate = true
-            button.image = image
+            button.image = base
         }
     }
 
@@ -466,8 +504,19 @@ struct NativeSearchField: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         var parent: NativeSearchField
+        /// AppKit's stock search-button image, captured once at view
+        /// creation. Tinted copies are derived from this; the original is
+        /// re-applied when the filter clears.
+        var defaultIcon: NSImage?
+        /// Last seen filter state — used in `updateNSView` to skip menu /
+        /// icon work when nothing relevant changed. Initialized to a
+        /// sentinel that forces the first update to run.
+        var lastTypeFilter: Set<RedisKeyType> = []
+        var lastJsonSupported: Bool = false
         init(_ parent: NativeSearchField) {
             self.parent = parent
+            self.lastTypeFilter = parent.typeFilter
+            self.lastJsonSupported = parent.jsonSupported
         }
 
         func controlTextDidChange(_ obj: Notification) {
@@ -525,5 +574,53 @@ struct NativeSearchField: NSViewRepresentable {
             }
             return menu
         }
+    }
+}
+
+/// NSSearchFieldCell subclass that widens the search-button hit rect (the
+/// magnifier + chevron area) without enlarging the glyph itself, so the
+/// dropdown menu is easier to click. Pairs with `WideHitSearchField`.
+///
+/// Asymmetric padding: extra room on the left grows into the bezel margin
+/// (free, invisible space), while right-side growth becomes the visible
+/// gap before the text — keep it small. AppKit derives `searchTextRect`
+/// from our overridden button rect, so we deliberately do _not_ override
+/// `searchTextRect` here; doing so used to double-count the padding and
+/// broke text-field cursor scrolling once the input got long.
+private final class WideHitSearchFieldCell: NSSearchFieldCell {
+    private static let padLeft: CGFloat = 8
+    private static let padRight: CGFloat = 3
+
+    override func searchButtonRect(forBounds rect: NSRect) -> NSRect {
+        var r = super.searchButtonRect(forBounds: rect)
+        r.origin.x = max(rect.minX, r.origin.x - Self.padLeft)
+        r.size.width += Self.padLeft + Self.padRight
+        return r
+    }
+}
+
+/// Marker NSSearchField subclass so AppKit instantiates our wider-hit
+/// cell during `init`. `cellClass` is the documented hook for this; we
+/// keep the setter accepting (ignored) writes for API compatibility.
+private final class WideHitSearchField: NSSearchField {
+    override class var cellClass: AnyClass? {
+        get { WideHitSearchFieldCell.self }
+        set { _ = newValue }
+    }
+}
+
+private extension NSImage {
+    /// Composite an opaque tint over the template-image alpha mask. Used
+    /// to colorize the search-button glyph without altering its shape.
+    func tinted(with color: NSColor) -> NSImage {
+        let copy = NSImage(size: size)
+        copy.lockFocus()
+        defer { copy.unlockFocus() }
+        let rect = NSRect(origin: .zero, size: size)
+        self.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1.0)
+        color.set()
+        rect.fill(using: .sourceAtop)
+        copy.isTemplate = false
+        return copy
     }
 }
