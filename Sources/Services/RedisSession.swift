@@ -32,6 +32,7 @@ final class RedisSession {
     var currentDB: Int = 0
     var dbSize: Int = 0
     var serverVersion: String?
+    var jsonSupported: Bool = false
 
     var keys: [RedisKey] = []
     var scanCursor: Int = 0
@@ -121,6 +122,7 @@ final class RedisSession {
             currentDB = await service.currentDB
             status = .connected
             serverVersion = try? await service.serverVersion()
+            jsonSupported = await service.hasRedisJSON()
             await refreshDBSize()
             await reloadKeys()
         } catch {

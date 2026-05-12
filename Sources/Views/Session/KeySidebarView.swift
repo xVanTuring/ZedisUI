@@ -353,15 +353,23 @@ private struct KeyGroupRow: View {
 
 struct NewKeySheet: View {
     let initialType: RedisKeyType
+    let jsonSupported: Bool
     let onCreate: (String, RedisKeyType) -> Void
     @State private var name = ""
     @State private var type: RedisKeyType
     @Environment(\.dismiss) private var dismiss
 
-    init(initialType: RedisKeyType, onCreate: @escaping (String, RedisKeyType) -> Void) {
+    init(initialType: RedisKeyType, jsonSupported: Bool = false, onCreate: @escaping (String, RedisKeyType) -> Void) {
         self.initialType = initialType
+        self.jsonSupported = jsonSupported
         self.onCreate = onCreate
         self._type = State(initialValue: initialType)
+    }
+
+    private var availableTypes: [RedisKeyType] {
+        var types: [RedisKeyType] = [.string, .hash, .list, .set, .zset]
+        if jsonSupported { types.append(.json) }
+        return types
     }
 
     var body: some View {
@@ -370,7 +378,7 @@ struct NewKeySheet: View {
             Form {
                 TextField("Key name", text: $name)
                 Picker("Type", selection: $type) {
-                    ForEach([RedisKeyType.string, .hash, .list, .set, .zset], id: \.self) { t in
+                    ForEach(availableTypes, id: \.self) { t in
                         Text(t.displayName).tag(t)
                     }
                 }

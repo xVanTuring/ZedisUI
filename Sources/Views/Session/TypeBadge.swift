@@ -23,6 +23,7 @@ struct TypeBadge: View {
         case .set:     return Color.pink.opacity(0.85)
         case .zset:    return Color.orange.opacity(0.85)
         case .stream:  return Color.teal.opacity(0.85)
+        case .json:    return Color.cyan.opacity(0.85)
         case .unknown: return Color.gray
         }
     }
@@ -37,6 +38,7 @@ extension RedisKeyType {
         case .zset:    return "ZSET"
         case .hash:    return "HASH"
         case .stream:  return "STREAM"
+        case .json:    return "JSON"
         case .unknown: return "?"
         }
     }

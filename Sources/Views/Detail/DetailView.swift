@@ -156,11 +156,12 @@ struct DetailView: View {
         case .set:    SetEditor(session: session, key: key)
         case .zset:   ZSetEditor(session: session, key: key)
         case .stream: StreamEditor(session: session, key: key)
+        case .json:   JSONEditor(session: session, key: key)
         case .unknown:
             ContentUnavailableView(
                 "Type not supported yet",
-                systemImage: "wrench.and.screwdriver",
-                description: Text("Streams and unknown types aren't editable in this build.")
+                systemImage: "questionmark.square.dashed",
+                description: Text("This key type is not supported.")
             )
         }
     }

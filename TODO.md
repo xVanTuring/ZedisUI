@@ -4,7 +4,7 @@
 
 ## 工具栏占位
 
-- [ ] 导航前进 / 后退（`<` `>`）—— 用户选中 key 的历史栈，下一步要做
+- [x] 导航前进 / 后退（`<` `>`）—— 用户选中 key 的历史栈，下一步要做
 - [ ] Read-only mode（锁图标）—— `disabled(true)`，help "Coming soon"
 - [ ] Pub/Sub（电波图标）—— `disabled(true)`，help "Coming soon"
 
@@ -12,8 +12,8 @@
 
 - [x] **Stream 只读视图** —— `StreamEditor` 用 XRANGE/XLEN 渲染 ID + Fields 表（最近的在上）
 - [x] **Stream 行操作** —— Table 选中、右键 Copy ID / Copy Fields / Delete（XDEL）、底部 "Add entry…" 打开多 field/value sheet 走 XADD
-- [ ] **Stream 单条编辑** —— Redis 流没有 in-place 修改语义；要改只能"删了再 XADD"，UI 没接
-- [ ] **Unknown 兜底** —— 仍是 `ContentUnavailableView "Type not supported yet"`（保留即可）
+- [x] ~~**Stream 单条编辑** —— Redis 流没有 in-place 修改语义；要改只能"删了再 XADD"，UI 没接~~
+- [x] **Unknown 兜底** —— `ContentUnavailableView "Type not supported yet"`，描述文案去掉了过时的 Stream 引用
 
 ## Inspector 面板
 

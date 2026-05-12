@@ -70,7 +70,7 @@ private struct SessionContent: View {
         .navigationTitle(session.connection.name)
         .navigationSubtitle(subtitleText)
         .sheet(item: $newKeyDialog) { dialog in
-            NewKeySheet(initialType: dialog.type) { name, type in
+            NewKeySheet(initialType: dialog.type, jsonSupported: session.jsonSupported) { name, type in
                 Task { await createKey(name: name, type: type) }
             }
         }
@@ -93,6 +93,11 @@ private struct SessionContent: View {
                 Menu {
                     ForEach([RedisKeyType.string, .hash, .list, .set, .zset], id: \.self) { t in
                         Button(t.displayName) { newKeyDialog = NewKeyDialog(type: t) }
+                    }
+                    if session.jsonSupported {
+                        Button(RedisKeyType.json.displayName) {
+                            newKeyDialog = NewKeyDialog(type: .json)
+                        }
                     }
                     Divider()
                     Button("Fill Demo Data") {
@@ -167,6 +172,7 @@ private struct SessionContent: View {
             case .set:    try await session.service.sadd(name, member: "")
             case .zset:   try await session.service.zadd(name, member: "", score: 0)
             case .hash:   try await session.service.hset(name, field: "field", value: "")
+            case .json:   try await session.service.jsonSet(name, value: "{}")
             case .stream, .unknown: break
             }
             await session.reloadKeys()

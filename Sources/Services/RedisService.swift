@@ -238,6 +238,31 @@ actor RedisService {
         _ = try await raw("SET", [key, value])
     }
 
+    // MARK: - RedisJSON
+
+    /// Returns true if the server has the RedisJSON module loaded.
+    /// Uses COMMAND INFO so no keys are touched; treats any "unknown command"
+    /// error as absent, other errors as inconclusive (returns false).
+    func hasRedisJSON() async -> Bool {
+        guard let reply = try? await raw("COMMAND", ["INFO", "JSON.GET"]) else { return false }
+        // COMMAND INFO returns an array with one element per queried command.
+        // The element is null when the command is unknown.
+        if case .array(let items) = reply, let first = items.first {
+            if case .null = first { return false }
+            return true
+        }
+        return false
+    }
+
+    func jsonGet(_ key: String) async throws -> String? {
+        let reply = try await raw("JSON.GET", [key])
+        return reply.string
+    }
+
+    func jsonSet(_ key: String, value: String) async throws {
+        _ = try await raw("JSON.SET", [key, "$", value])
+    }
+
     // MARK: - Hash
 
     func hgetall(_ key: String) async throws -> [(String, String)] {

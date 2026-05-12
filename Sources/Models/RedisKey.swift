@@ -7,17 +7,19 @@ enum RedisKeyType: String, Codable, CaseIterable, Hashable {
     case zset
     case hash
     case stream
+    case json
     case unknown
 
     init(rawWire: String) {
         switch rawWire.lowercased() {
-        case "string": self = .string
-        case "list":   self = .list
-        case "set":    self = .set
-        case "zset":   self = .zset
-        case "hash":   self = .hash
-        case "stream": self = .stream
-        default:       self = .unknown
+        case "string":     self = .string
+        case "list":       self = .list
+        case "set":        self = .set
+        case "zset":       self = .zset
+        case "hash":       self = .hash
+        case "stream":     self = .stream
+        case "rejson-rl":  self = .json
+        default:           self = .unknown
         }
     }
 
@@ -29,6 +31,7 @@ enum RedisKeyType: String, Codable, CaseIterable, Hashable {
         case .zset:    return "Sorted Set"
         case .hash:    return "Hash"
         case .stream:  return "Stream"
+        case .json:    return "JSON"
         case .unknown: return "?"
         }
     }
@@ -41,6 +44,7 @@ enum RedisKeyType: String, Codable, CaseIterable, Hashable {
         case .zset:    return "list.number"
         case .hash:    return "tablecells"
         case .stream:  return "waveform"
+        case .json:    return "curlybraces"
         case .unknown: return "questionmark"
         }
     }
