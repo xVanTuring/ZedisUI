@@ -328,11 +328,25 @@ final class JSONNode: Identifiable {
     let id = UUID()
     var key: String?
     var kind: Kind
-    var stringValue: String = ""
+    var stringValue: String = "" {
+        didSet { _cachedIsJSONLike = nil }
+    }
     var numberValue: String = ""
     var boolValue: Bool = false
     var children: [JSONNode] = []
     var isExpanded: Bool = true
+
+    // Cached result of `isJSONObjectOrArrayString(stringValue)`. The check
+    // runs a full `JSONSerialization` parse, so for large string values it
+    // was being re-evaluated on every SwiftUI body pass per row — death by
+    // a thousand parses. Invalidated whenever `stringValue` changes.
+    @ObservationIgnored private var _cachedIsJSONLike: Bool?
+    var isJSONLikeString: Bool {
+        if let v = _cachedIsJSONLike { return v }
+        let v = isJSONObjectOrArrayString(stringValue)
+        _cachedIsJSONLike = v
+        return v
+    }
 
     enum Kind: String, CaseIterable, Identifiable {
         case object, array, string, number, bool, null
@@ -444,6 +458,41 @@ final class JSONNode: Identifiable {
 }
 
 // MARK: - Tree view
+//
+// The tree is rendered as a flat list inside a single `LazyVStack` so SwiftUI
+// can virtualize off-screen rows. `flattenJSONTree` walks only into expanded
+// containers, so the produced row count is O(visible nodes) regardless of the
+// total document size — a 50k-node JSON whose root is collapsed produces a
+// single row.
+
+private enum JSONFlatRow: Identifiable {
+    case node(JSONNode, parent: JSONNode?, depth: Int, isRoot: Bool, indexInParent: Int?)
+    case addChild(parent: JSONNode, depth: Int)
+
+    var id: String {
+        switch self {
+        case .node(let n, _, _, _, _): return "n-\(n.id.uuidString)"
+        case .addChild(let p, _):      return "a-\(p.id.uuidString)"
+        }
+    }
+}
+
+private func flattenJSONTree(
+    _ node: JSONNode,
+    parent: JSONNode?,
+    depth: Int,
+    isRoot: Bool,
+    indexInParent: Int?,
+    into rows: inout [JSONFlatRow]
+) {
+    rows.append(.node(node, parent: parent, depth: depth, isRoot: isRoot, indexInParent: indexInParent))
+    if (node.kind == .object || node.kind == .array) && node.isExpanded {
+        for (i, child) in node.children.enumerated() {
+            flattenJSONTree(child, parent: node, depth: depth + 1, isRoot: false, indexInParent: i, into: &rows)
+        }
+        rows.append(.addChild(parent: node, depth: depth + 1))
+    }
+}
 
 struct JSONTreeView: View {
     @Bindable var root: JSONNode
@@ -451,32 +500,32 @@ struct JSONTreeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                JSONNodeView(node: root, parent: nil, depth: 0, isRoot: true, onEdit: onEdit)
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(flattened) { row in
+                    switch row {
+                    case .node(let node, let parent, let depth, let isRoot, let indexInParent):
+                        JSONRowView(
+                            node: node,
+                            parent: parent,
+                            depth: depth,
+                            isRoot: isRoot,
+                            indexInParent: indexInParent,
+                            onEdit: onEdit
+                        )
+                    case .addChild(let parent, let depth):
+                        AddChildRow(parent: parent, depth: depth, onEdit: onEdit)
+                    }
+                }
             }
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
-}
 
-private struct JSONNodeView: View {
-    @Bindable var node: JSONNode
-    let parent: JSONNode?
-    let depth: Int
-    let isRoot: Bool
-    let onEdit: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            JSONRowView(node: node, parent: parent, depth: depth, isRoot: isRoot, onEdit: onEdit)
-            if (node.kind == .object || node.kind == .array) && node.isExpanded {
-                ForEach(node.children) { child in
-                    JSONNodeView(node: child, parent: node, depth: depth + 1, isRoot: false, onEdit: onEdit)
-                }
-                AddChildRow(parent: node, depth: depth + 1, onEdit: onEdit)
-            }
-        }
+    private var flattened: [JSONFlatRow] {
+        var rows: [JSONFlatRow] = []
+        flattenJSONTree(root, parent: nil, depth: 0, isRoot: true, indexInParent: nil, into: &rows)
+        return rows
     }
 }
 
@@ -485,15 +534,21 @@ private struct JSONRowView: View {
     let parent: JSONNode?
     let depth: Int
     let isRoot: Bool
+    let indexInParent: Int?
     let onEdit: () -> Void
 
     @State private var hover = false
     @State private var showJSONSheet = false
+    // Click-to-edit: TextFields are expensive on macOS (each one bridges to
+    // NSTextField). LazyVStack re-creates rows as they scroll into view, so
+    // showing TextField unconditionally was the dominant scroll-time cost.
+    // We render `Text` by default and only swap in `TextField` when the cell
+    // is actually being edited.
+    @State private var editingKey = false
+    @State private var editingString = false
+    @State private var editingNumber = false
 
     private var isContainer: Bool { node.kind == .object || node.kind == .array }
-    private var indexInParent: Int? {
-        parent?.children.firstIndex(where: { $0.id == node.id })
-    }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -555,15 +610,18 @@ private struct JSONRowView: View {
                 .italic()
                 .font(.system(.body, design: .monospaced))
         } else if parent?.kind == .object {
-            TextField("key", text: Binding(
-                get: { node.key ?? "" },
-                set: { node.key = $0; onEdit() }
-            ))
-            .textFieldStyle(.roundedBorder)
-            .controlSize(.small)
-            .font(.system(.body, design: .monospaced))
-            .foregroundStyle(Color(red: 0.55, green: 0.85, blue: 0.95)) // cyan-ish for keys
-            .frame(width: 160)
+            if editingKey {
+                EditableKeyField(node: node, onEdit: onEdit) { editingKey = false }
+            } else {
+                Text(node.key?.isEmpty == false ? node.key! : "\"\"")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(Color(red: 0.55, green: 0.85, blue: 0.95))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(width: 160, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { editingKey = true }
+            }
         } else if parent?.kind == .array, let idx = indexInParent {
             Text("[\(idx)]")
                 .foregroundStyle(Color(red: 0.78, green: 0.65, blue: 1.00))
@@ -602,18 +660,20 @@ private struct JSONRowView: View {
                 .onTapGesture { node.isExpanded.toggle() }
         case .string:
             HStack(spacing: 6) {
-                TextField("", text: Binding(
-                    get: { node.stringValue },
-                    set: { node.stringValue = $0; onEdit() }
-                ), axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
-                .font(.system(.body, design: .monospaced))
-                .lineLimit(1...4)
-                .foregroundStyle(JSONNode.Kind.string.accent)
-                .frame(width: 420, alignment: .leading)
+                if editingString {
+                    EditableStringField(node: node, onEdit: onEdit) { editingString = false }
+                } else {
+                    Text(node.stringValue.isEmpty ? "\"\"" : node.stringValue)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(JSONNode.Kind.string.accent)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(width: 420, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture { editingString = true }
+                }
 
-                if isJSONObjectOrArrayString(node.stringValue) {
+                if node.isJSONLikeString {
                     Button { showJSONSheet = true } label: {
                         HStack(spacing: 4) {
                             Text("{ }")
@@ -632,16 +692,17 @@ private struct JSONRowView: View {
                 }
             }
         case .number:
-            let valid = node.numberValue.isEmpty || Double(node.numberValue) != nil
-            TextField("0", text: Binding(
-                get: { node.numberValue },
-                set: { node.numberValue = $0; onEdit() }
-            ))
-            .textFieldStyle(.roundedBorder)
-            .controlSize(.small)
-            .font(.system(.body, design: .monospaced))
-            .frame(width: 420, alignment: .leading)
-            .foregroundStyle(valid ? JSONNode.Kind.number.accent : Color.red)
+            if editingNumber {
+                EditableNumberField(node: node, onEdit: onEdit) { editingNumber = false }
+            } else {
+                let valid = node.numberValue.isEmpty || Double(node.numberValue) != nil
+                Text(node.numberValue.isEmpty ? "0" : node.numberValue)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(valid ? JSONNode.Kind.number.accent : Color.red)
+                    .frame(width: 420, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { editingNumber = true }
+            }
         case .bool:
             Toggle("", isOn: Binding(
                 get: { node.boolValue },
@@ -733,6 +794,88 @@ private struct JSONRowView: View {
             node.children = []
         }
         onEdit()
+    }
+}
+
+// MARK: - Lazy editable fields
+//
+// These exist so the heavy `TextField` is only constructed for the one cell
+// actually being edited. The parent row renders cheap `Text` views otherwise,
+// which keeps `LazyVStack` scroll-time row creation fast.
+
+private struct EditableKeyField: View {
+    @Bindable var node: JSONNode
+    let onEdit: () -> Void
+    let exit: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("key", text: Binding(
+            get: { node.key ?? "" },
+            set: { node.key = $0; onEdit() }
+        ))
+        .textFieldStyle(.roundedBorder)
+        .controlSize(.small)
+        .font(.system(.body, design: .monospaced))
+        .foregroundStyle(Color(red: 0.55, green: 0.85, blue: 0.95))
+        .frame(width: 160)
+        .focused($focused)
+        .onAppear { focused = true }
+        .onSubmit { exit() }
+        .onChange(of: focused) { _, isFocused in
+            if !isFocused { exit() }
+        }
+    }
+}
+
+private struct EditableStringField: View {
+    @Bindable var node: JSONNode
+    let onEdit: () -> Void
+    let exit: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("", text: Binding(
+            get: { node.stringValue },
+            set: { node.stringValue = $0; onEdit() }
+        ), axis: .vertical)
+        .textFieldStyle(.roundedBorder)
+        .controlSize(.small)
+        .font(.system(.body, design: .monospaced))
+        .lineLimit(1...4)
+        .foregroundStyle(JSONNode.Kind.string.accent)
+        .frame(width: 420, alignment: .leading)
+        .focused($focused)
+        .onAppear { focused = true }
+        .onChange(of: focused) { _, isFocused in
+            if !isFocused { exit() }
+        }
+    }
+}
+
+private struct EditableNumberField: View {
+    @Bindable var node: JSONNode
+    let onEdit: () -> Void
+    let exit: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        let valid = node.numberValue.isEmpty || Double(node.numberValue) != nil
+        TextField("0", text: Binding(
+            get: { node.numberValue },
+            set: { node.numberValue = $0; onEdit() }
+        ))
+        .textFieldStyle(.roundedBorder)
+        .controlSize(.small)
+        .font(.system(.body, design: .monospaced))
+        .frame(width: 420, alignment: .leading)
+        .foregroundStyle(valid ? JSONNode.Kind.number.accent : Color.red)
+        .focused($focused)
+        .onAppear { focused = true }
+        .onSubmit { exit() }
+        .onChange(of: focused) { _, isFocused in
+            if !isFocused { exit() }
+        }
     }
 }
 
