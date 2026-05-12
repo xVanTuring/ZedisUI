@@ -48,7 +48,7 @@ final class RedisSession {
     /// SCAN gets `*` in that case (see `loadMoreKeys`). The field is bound
     /// directly to `.searchable`, so we keep it free of the literal "*".
     var pattern: String = ""
-    var typeFilter: RedisKeyType? = nil
+    var typeFilter: Set<RedisKeyType> = []
 
     var selectedKey: String? {
         didSet { recordSelection(oldValue: oldValue) }
@@ -396,7 +396,7 @@ final class RedisSession {
             // Preserve scan order roughly by filtering out duplicates, appending new.
             let existing = Set(keys.map(\.name))
             for k in resolved where !existing.contains(k.name) {
-                if let filter = typeFilter, k.type != filter { continue }
+                if !typeFilter.isEmpty && !typeFilter.contains(k.type) { continue }
                 keys.append(k)
             }
             scanCursor = page.next

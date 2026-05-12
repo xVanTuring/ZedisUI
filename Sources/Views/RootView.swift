@@ -91,13 +91,8 @@ private struct SessionContent: View {
             }
             ToolbarItem(placement: .navigation) {
                 Menu {
-                    ForEach([RedisKeyType.string, .hash, .list, .set, .zset], id: \.self) { t in
+                    ForEach(RedisKeyType.creatable(includeJSON: session.jsonSupported), id: \.self) { t in
                         Button(t.displayName) { newKeyDialog = NewKeyDialog(type: t) }
-                    }
-                    if session.jsonSupported {
-                        Button(RedisKeyType.json.displayName) {
-                            newKeyDialog = NewKeyDialog(type: .json)
-                        }
                     }
                     Divider()
                     Button("Fill Demo Data") {
@@ -116,7 +111,8 @@ private struct SessionContent: View {
                 NativeSearchField(
                     text: $session.pattern,
                     typeFilter: $session.typeFilter,
-                    prompt: "Search keys"
+                    prompt: "Search keys",
+                    jsonSupported: session.jsonSupported
                 ) {
                     Task { await session.reloadKeys() }
                 }

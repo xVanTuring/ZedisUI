@@ -160,8 +160,9 @@ struct KeySidebarView: View {
     }
 
     private var filteredKeys: [RedisKey] {
-        guard let f = session.typeFilter else { return session.keys }
-        return session.keys.filter { $0.type == f }
+        let f = session.typeFilter
+        guard !f.isEmpty else { return session.keys }
+        return session.keys.filter { f.contains($0.type) }
     }
 
     // MARK: - DB bar
@@ -367,9 +368,7 @@ struct NewKeySheet: View {
     }
 
     private var availableTypes: [RedisKeyType] {
-        var types: [RedisKeyType] = [.string, .hash, .list, .set, .zset]
-        if jsonSupported { types.append(.json) }
-        return types
+        RedisKeyType.creatable(includeJSON: jsonSupported)
     }
 
     var body: some View {
@@ -408,8 +407,9 @@ struct NewKeySheet: View {
 /// for free, which we use as the type filter.
 struct NativeSearchField: NSViewRepresentable {
     @Binding var text: String
-    @Binding var typeFilter: RedisKeyType?
+    @Binding var typeFilter: Set<RedisKeyType>
     var prompt: String
+    var jsonSupported: Bool = false
     var onSubmit: () -> Void = {}
 
     func makeNSView(context: Context) -> NSSearchField {
@@ -422,6 +422,7 @@ struct NativeSearchField: NSViewRepresentable {
         field.sendsWholeSearchString = true
         field.sendsSearchStringImmediately = false
         field.searchMenuTemplate = context.coordinator.makeMenu()
+        applySearchIcon(to: field, active: !typeFilter.isEmpty)
         return field
     }
 
@@ -433,6 +434,30 @@ struct NativeSearchField: NSViewRepresentable {
         field.placeholderString = prompt
         // Rebuild so checkmarks reflect the current `typeFilter`.
         field.searchMenuTemplate = context.coordinator.makeMenu()
+        applySearchIcon(to: field, active: !typeFilter.isEmpty)
+    }
+
+    /// Swap the magnifier glyph for an accent-tinted filled variant when
+    /// any type filter is active, so the icon doubles as a "filter on" cue.
+    private func applySearchIcon(to field: NSSearchField, active: Bool) {
+        guard let cell = field.cell as? NSSearchFieldCell,
+              let button = cell.searchButtonCell
+        else { return }
+        let symbolName = active ? "line.3.horizontal.decrease.circle.fill" : "magnifyingglass"
+        let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+        guard let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(config)
+        else { return }
+        if active {
+            image.isTemplate = false
+            let tinted = image.withSymbolConfiguration(
+                NSImage.SymbolConfiguration(paletteColors: [.controlAccentColor])
+            )
+            button.image = tinted ?? image
+        } else {
+            image.isTemplate = true
+            button.image = image
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -454,37 +479,48 @@ struct NativeSearchField: NSViewRepresentable {
             parent.onSubmit()
         }
 
-        @objc func selectAllTypes(_ sender: NSMenuItem) {
-            parent.typeFilter = nil
+        @objc func clearTypes(_ sender: NSMenuItem) {
+            parent.typeFilter = []
         }
 
-        @objc func selectType(_ sender: NSMenuItem) {
-            if let raw = sender.representedObject as? String,
-               let t = RedisKeyType(rawValue: raw) {
-                parent.typeFilter = t
+        @objc func toggleType(_ sender: NSMenuItem) {
+            guard let raw = sender.representedObject as? String,
+                  let t = RedisKeyType(rawValue: raw)
+            else { return }
+            if parent.typeFilter.contains(t) {
+                parent.typeFilter.remove(t)
+            } else {
+                parent.typeFilter.insert(t)
             }
         }
 
         func makeMenu() -> NSMenu {
             let menu = NSMenu()
-            let all = NSMenuItem(
-                title: "All Types",
-                action: #selector(selectAllTypes(_:)),
+            // NSSearchField only calls actions on autoenabled items, so
+            // disabling them when the set is empty would also kill the
+            // click. Keep enabled; the action is a no-op when nothing
+            // is selected — there's no harm.
+            menu.autoenablesItems = false
+
+            let clear = NSMenuItem(
+                title: "Clear Filter",
+                action: #selector(clearTypes(_:)),
                 keyEquivalent: ""
             )
-            all.target = self
-            all.state = (parent.typeFilter == nil) ? .on : .off
-            menu.addItem(all)
+            clear.target = self
+            clear.isEnabled = !parent.typeFilter.isEmpty
+            menu.addItem(clear)
             menu.addItem(.separator())
-            for t in [RedisKeyType.string, .hash, .list, .set, .zset, .stream] {
+
+            for t in RedisKeyType.filterable(includeJSON: parent.jsonSupported) {
                 let item = NSMenuItem(
                     title: t.displayName,
-                    action: #selector(selectType(_:)),
+                    action: #selector(toggleType(_:)),
                     keyEquivalent: ""
                 )
                 item.target = self
                 item.representedObject = t.rawValue
-                item.state = (parent.typeFilter == t) ? .on : .off
+                item.state = parent.typeFilter.contains(t) ? .on : .off
                 menu.addItem(item)
             }
             return menu

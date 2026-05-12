@@ -48,6 +48,21 @@ enum RedisKeyType: String, Codable, CaseIterable, Hashable {
         case .unknown: return "questionmark"
         }
     }
+
+    /// Types the user can create via the new-key menu / sheet.
+    /// Stream is omitted — there's no plain creation path for it.
+    static func creatable(includeJSON: Bool) -> [RedisKeyType] {
+        var types: [RedisKeyType] = [.string, .hash, .list, .set, .zset]
+        if includeJSON { types.append(.json) }
+        return types
+    }
+
+    /// Types the user can filter by in the search menu.
+    static func filterable(includeJSON: Bool) -> [RedisKeyType] {
+        var types: [RedisKeyType] = [.string, .hash, .list, .set, .zset, .stream]
+        if includeJSON { types.append(.json) }
+        return types
+    }
 }
 
 /// One row in the key list.
