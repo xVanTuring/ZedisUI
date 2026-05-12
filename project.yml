@@ -58,8 +58,8 @@ targets:
       properties:
         CFBundleName: $(PRODUCT_NAME)
         CFBundleDisplayName: ZedisUI
-        CFBundleShortVersionString: "0.1.2"
-        CFBundleVersion: "3"
+        CFBundleShortVersionString: "0.2.0"
+        CFBundleVersion: "4"
         LSMinimumSystemVersion: "15.0"
         NSHumanReadableCopyright: "Copyright © xVanTuring 2026"
         NSHighResolutionCapable: true
