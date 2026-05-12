@@ -98,10 +98,7 @@ struct JSONEditor: View {
     }
 
     private var textEditor: some View {
-        TextEditor(text: $rawText)
-            .font(.system(.body, design: .monospaced))
-            .scrollContentBackground(.hidden)
-            .padding(10)
+        JSONCodeEditor(text: $rawText)
             .onChange(of: rawText) { _, _ in
                 if loaded {
                     dirty = true
@@ -135,7 +132,7 @@ struct JSONEditor: View {
     private func switchMode(from old: Mode, to new: Mode) {
         guard old != new else { return }
         if old == .tree && new == .text {
-            rawText = serialize(root) ?? rawText
+            rawText = Self.serialize(root) ?? rawText
             validateText()
         } else if old == .text && new == .tree {
             if let parsed = try? JSONNode.parse(rawText) {
@@ -152,7 +149,7 @@ struct JSONEditor: View {
     private func load() async {
         loaded = false
         let raw = (try? await session.service.jsonGet(key)) ?? ""
-        rawText = prettyPrint(raw) ?? raw
+        rawText = Self.prettyPrint(raw) ?? raw
         root = (try? JSONNode.parse(rawText)) ?? JSONNode(kind: .object)
         dirty = false
         jsonError = nil
@@ -163,7 +160,7 @@ struct JSONEditor: View {
         guard dirty, jsonError == nil else { return }
         let payload: String
         if mode == .tree {
-            guard let s = serialize(root) else {
+            guard let s = Self.serialize(root) else {
                 jsonError = "Invalid JSON"
                 return
             }
@@ -183,7 +180,7 @@ struct JSONEditor: View {
     }
 
     private func formatText() {
-        if let pretty = prettyPrint(rawText) {
+        if let pretty = Self.prettyPrint(rawText) {
             rawText = pretty
             validateText()
         }
@@ -204,15 +201,15 @@ struct JSONEditor: View {
     }
 
     private func validateTree() {
-        jsonError = findInvalidNumber(in: root) ? "Invalid number" : nil
+        jsonError = Self.findInvalidNumber(in: root) ? "Invalid number" : nil
     }
 
-    private func findInvalidNumber(in node: JSONNode) -> Bool {
+    static func findInvalidNumber(in node: JSONNode) -> Bool {
         if node.kind == .number {
             let s = node.numberValue.trimmingCharacters(in: .whitespaces)
             if !s.isEmpty && Double(s) == nil { return true }
         }
-        return node.children.contains(where: findInvalidNumber)
+        return node.children.contains(where: { findInvalidNumber(in: $0) })
     }
 
     private func setAllExpanded(_ expanded: Bool) {
@@ -228,7 +225,7 @@ struct JSONEditor: View {
 
     // MARK: JSON I/O
 
-    private func prettyPrint(_ s: String) -> String? {
+    static func prettyPrint(_ s: String) -> String? {
         guard let data = s.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed),
               let pretty = try? JSONSerialization.data(
@@ -240,13 +237,13 @@ struct JSONEditor: View {
         return str
     }
 
-    private func serialize(_ node: JSONNode) -> String? {
+    static func serialize(_ node: JSONNode) -> String? {
         var out = ""
         guard writeJSON(node, into: &out, indent: 0) else { return nil }
         return out
     }
 
-    private func writeJSON(_ node: JSONNode, into out: inout String, indent: Int) -> Bool {
+    private static func writeJSON(_ node: JSONNode, into out: inout String, indent: Int) -> Bool {
         let pad = String(repeating: "  ", count: indent)
         let inner = String(repeating: "  ", count: indent + 1)
         switch node.kind {
@@ -290,7 +287,7 @@ struct JSONEditor: View {
         }
     }
 
-    private func encodeString(_ s: String) -> String {
+    private static func encodeString(_ s: String) -> String {
         var out = "\""
         for ch in s.unicodeScalars {
             switch ch {
@@ -312,6 +309,16 @@ struct JSONEditor: View {
         out += "\""
         return out
     }
+}
+
+// String content that is a JSON object or array (used to offer rich editing).
+func isJSONObjectOrArrayString(_ s: String) -> Bool {
+    let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let first = trimmed.first, first == "{" || first == "[" else { return false }
+    guard let data = trimmed.data(using: .utf8),
+          let obj = try? JSONSerialization.jsonObject(with: data, options: [])
+    else { return false }
+    return obj is [Any] || obj is [String: Any]
 }
 
 // MARK: - Tree model
@@ -438,7 +445,7 @@ final class JSONNode: Identifiable {
 
 // MARK: - Tree view
 
-private struct JSONTreeView: View {
+struct JSONTreeView: View {
     @Bindable var root: JSONNode
     let onEdit: () -> Void
 
@@ -481,6 +488,7 @@ private struct JSONRowView: View {
     let onEdit: () -> Void
 
     @State private var hover = false
+    @State private var showJSONSheet = false
 
     private var isContainer: Bool { node.kind == .object || node.kind == .array }
     private var indexInParent: Int? {
@@ -531,6 +539,12 @@ private struct JSONRowView: View {
         .onHover { hover = $0 }
         .background(hover ? Color.gray.opacity(0.08) : Color.clear)
         .contextMenu { contextMenuItems }
+        .sheet(isPresented: $showJSONSheet) {
+            EmbeddedJSONSheet(stringValue: Binding(
+                get: { node.stringValue },
+                set: { node.stringValue = $0; onEdit() }
+            ))
+        }
     }
 
     @ViewBuilder
@@ -587,16 +601,36 @@ private struct JSONRowView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { node.isExpanded.toggle() }
         case .string:
-            TextField("", text: Binding(
-                get: { node.stringValue },
-                set: { node.stringValue = $0; onEdit() }
-            ), axis: .vertical)
-            .textFieldStyle(.roundedBorder)
-            .controlSize(.small)
-            .font(.system(.body, design: .monospaced))
-            .lineLimit(1...4)
-            .foregroundStyle(JSONNode.Kind.string.accent)
-            .frame(width: 420, alignment: .leading)
+            HStack(spacing: 6) {
+                TextField("", text: Binding(
+                    get: { node.stringValue },
+                    set: { node.stringValue = $0; onEdit() }
+                ), axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.small)
+                .font(.system(.body, design: .monospaced))
+                .lineLimit(1...4)
+                .foregroundStyle(JSONNode.Kind.string.accent)
+                .frame(width: 420, alignment: .leading)
+
+                if isJSONObjectOrArrayString(node.stringValue) {
+                    Button { showJSONSheet = true } label: {
+                        HStack(spacing: 4) {
+                            Text("{ }")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .foregroundStyle(JSONNode.Kind.object.accent)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(JSONNode.Kind.object.accent.opacity(0.15), in: Capsule(style: .continuous))
+                        .overlay(Capsule(style: .continuous).strokeBorder(JSONNode.Kind.object.accent.opacity(0.35), lineWidth: 0.5))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Edit as JSON")
+                }
+            }
         case .number:
             let valid = node.numberValue.isEmpty || Double(node.numberValue) != nil
             TextField("0", text: Binding(
@@ -731,5 +765,188 @@ private struct AddChildRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
+    }
+}
+
+// MARK: - Embedded JSON sheet
+//
+// Opens when a string value parses as a JSON object/array. The sheet edits the
+// embedded JSON via the same Tree/Text editor as the top-level view, then
+// writes the serialized result back to the parent string binding on Save.
+
+private struct EmbeddedJSONSheet: View {
+    @Binding var stringValue: String
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var root: JSONNode = JSONNode(kind: .object)
+    @State private var rawText: String = ""
+    @State private var mode: JSONEditor.Mode = .tree
+    @State private var jsonError: String?
+    @State private var initialized = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            if let err = jsonError {
+                errorBar(err)
+            }
+            Group {
+                if mode == .tree {
+                    JSONTreeView(root: root, onEdit: validateTree)
+                } else {
+                    JSONCodeEditor(text: $rawText)
+                        .onChange(of: rawText) { _, _ in validateText() }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+            footer
+        }
+        .frame(minWidth: 880, idealWidth: 960, minHeight: 540, idealHeight: 620)
+        .onAppear {
+            guard !initialized else { return }
+            initialized = true
+            rawText = JSONEditor.prettyPrint(stringValue) ?? stringValue
+            if let parsed = try? JSONNode.parse(rawText) {
+                root = parsed
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "curlybraces")
+                .foregroundStyle(JSONNode.Kind.object.accent)
+            Text("Edit JSON String")
+                .font(.headline)
+            Spacer()
+            Picker("", selection: $mode) {
+                ForEach(JSONEditor.Mode.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .onChange(of: mode) { old, new in switchMode(from: old, to: new) }
+
+            if mode == .text {
+                Button { formatText() } label: {
+                    Label("Format", systemImage: "text.alignleft")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            } else {
+                Button { setAllExpanded(true) } label: {
+                    Label("Expand All", systemImage: "chevron.down.square")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                Button { setAllExpanded(false) } label: {
+                    Label("Collapse All", systemImage: "chevron.right.square")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private var footer: some View {
+        HStack {
+            Spacer()
+            Button("Cancel") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+            Button("Save") { save() }
+                .buttonStyle(.borderedProminent)
+                .disabled(jsonError != nil)
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(12)
+    }
+
+    private func errorBar(_ err: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(err)
+                .font(.caption)
+                .foregroundStyle(.orange)
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.orange.opacity(0.1))
+    }
+
+    private func switchMode(from old: JSONEditor.Mode, to new: JSONEditor.Mode) {
+        guard old != new else { return }
+        if old == .tree && new == .text {
+            rawText = JSONEditor.serialize(root) ?? rawText
+            validateText()
+        } else if old == .text && new == .tree {
+            if let parsed = try? JSONNode.parse(rawText) {
+                root = parsed
+                jsonError = nil
+            } else {
+                jsonError = "Invalid JSON — fix before switching to Tree"
+                DispatchQueue.main.async { mode = .text }
+            }
+        }
+    }
+
+    private func save() {
+        let payload: String
+        if mode == .tree {
+            guard let s = JSONEditor.serialize(root) else {
+                jsonError = "Invalid JSON"
+                return
+            }
+            payload = s
+        } else {
+            guard let data = rawText.data(using: .utf8),
+                  (try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)) != nil
+            else {
+                jsonError = "Invalid JSON"
+                return
+            }
+            payload = rawText
+        }
+        stringValue = payload
+        dismiss()
+    }
+
+    private func formatText() {
+        if let pretty = JSONEditor.prettyPrint(rawText) {
+            rawText = pretty
+            validateText()
+        }
+    }
+
+    private func validateText() {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { jsonError = nil; return }
+        guard let data = rawText.data(using: .utf8),
+              (try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)) != nil
+        else {
+            jsonError = "Invalid JSON"
+            return
+        }
+        jsonError = nil
+    }
+
+    private func validateTree() {
+        jsonError = JSONEditor.findInvalidNumber(in: root) ? "Invalid number" : nil
+    }
+
+    private func setAllExpanded(_ expanded: Bool) {
+        setExpanded(root, expanded)
+    }
+
+    private func setExpanded(_ node: JSONNode, _ expanded: Bool) {
+        if node.kind == .object || node.kind == .array {
+            node.isExpanded = expanded
+            node.children.forEach { setExpanded($0, expanded) }
+        }
     }
 }
