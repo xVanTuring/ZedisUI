@@ -50,9 +50,13 @@ Do NOT trigger a release yourself; it is user-initiated.
   will not compile.
 - App sandbox is on with `network.client`, `network.server`,
   `files.user-selected.read-write`, plus a
-  `temporary-exception.files.absolute-path.read-write` for `/Applications/`
-  so the auto-updater can replace the bundle in place. The exception is
-  deliberately narrow — the rest of the disk remains sandboxed.
+  `temporary-exception.mach-lookup.global-name` listing
+  `$(PRODUCT_BUNDLE_IDENTIFIER)-spks` and `$(PRODUCT_BUNDLE_IDENTIFIER)-spki`
+  so Sparkle 2 can talk to its bundled Installer and Downloader XPC
+  services. Updates are installed by Sparkle's helper running outside
+  our sandbox — we no longer grant ourselves any `/Applications/`
+  write access. If you ever see the old `files.absolute-path.read-write`
+  exception for `/Applications/`, that's stale — delete it.
 
 ## Architecture
 

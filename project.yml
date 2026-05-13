@@ -45,6 +45,9 @@ packages:
   RediStack:
     url: https://github.com/swift-server/RediStack.git
     from: "1.6.0"
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle.git
+    from: "2.9.1"
 
 targets:
   ZedisUI:
@@ -67,6 +70,20 @@ targets:
         NSPrincipalClass: NSApplication
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
+        # ── Sparkle 2 auto-updater ──────────────────────────────────
+        # Appcast feed lives on `main` branch of the repo; release.sh
+        # commits an updated appcast.xml as part of each release.
+        SUFeedURL: "https://raw.githubusercontent.com/xVanTuring/ZedisUI/main/appcast.xml"
+        # EdDSA public key — used by Sparkle to verify the downloaded
+        # zip's signature before unpacking. Private key is held in the
+        # release engineer's login keychain (item name "https://sparkle-project.org").
+        # Regenerate via `generate_keys` from the Sparkle SPM artifact
+        # bundle; see docs/release.md.
+        SUPublicEDKey: "g3SCjADYsXhMN5/4hnQZ7eOawvtVoGJJsS5CFew15WQ="
+        # Required for sandboxed apps: enable the Installer XPC service
+        # bundled inside Sparkle.framework so updates can be applied
+        # without granting the main app /Applications write access.
+        SUEnableInstallerLauncherService: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: tech.xvanturing.ZedisUI
@@ -86,13 +103,17 @@ targets:
         # without this entitlement both calls fail with EPERM.
         com.apple.security.network.server: true
         com.apple.security.files.user-selected.read-write: true
-        # Auto-updater replaces the .app bundle in /Applications in
-        # place; the temp-exception is the minimum extra write privilege
-        # needed. Listing it here (not just in the .entitlements file) is
-        # required because xcodegen regenerates Resources/ZedisUI.entitlements
-        # from this `properties` dict each time it runs.
-        com.apple.security.temporary-exception.files.absolute-path.read-write:
-          - /Applications/
+        # Sparkle 2 runs its installer in an XPC service outside our
+        # sandbox; communication uses Mach lookups under names derived
+        # from our bundle identifier. The Sparkle docs require both
+        # `-spks` (Status) and `-spki` (Installer) global names.
+        # No /Applications temp-exception is needed — the XPC service
+        # is what writes the new bundle.
+        com.apple.security.temporary-exception.mach-lookup.global-name:
+          - $(PRODUCT_BUNDLE_IDENTIFIER)-spks
+          - $(PRODUCT_BUNDLE_IDENTIFIER)-spki
     dependencies:
       - package: RediStack
         product: RediStack
+      - package: Sparkle
+        product: Sparkle

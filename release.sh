@@ -21,6 +21,11 @@ PROJECT="ZedisUI.xcodeproj"
 PRODUCT="ZedisUI"
 GH_REPO="xVanTuring/ZedisUI"
 BUILD_DIR="build"
+APPCAST="appcast.xml"
+# Sparkle 2 ships its tools inside the SPM artifact bundle. Path is
+# resolved after `xcodebuild -resolvePackageDependencies` runs (which
+# happens implicitly via the Debug build below).
+SPARKLE_BIN_DIR="DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin"
 
 # ── Args ────────────────────────────────────────────────────────────
 usage() {
@@ -95,6 +100,20 @@ xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
     || { echo "ERROR: notarytool profile '${NOTARY_PROFILE}' is missing or invalid." >&2
          echo "       See docs/release.md → 'Set up notarytool profile'." >&2
          exit 1; }
+
+# Sparkle EdDSA private key must already be in the login keychain.
+# `generate_keys -p` succeeds only when the key exists; this is a much
+# cheaper failure than discovering it post-notarization.
+if [[ -x "${SPARKLE_BIN_DIR}/generate_keys" ]]; then
+    "${SPARKLE_BIN_DIR}/generate_keys" -p >/dev/null 2>&1 \
+        || { echo "ERROR: Sparkle EdDSA signing key not found in keychain." >&2
+             echo "       Generate it once with: ${SPARKLE_BIN_DIR}/generate_keys" >&2
+             echo "       See docs/release.md → 'Sparkle EdDSA key'." >&2
+             exit 1; }
+fi
+
+[[ -f "$APPCAST" ]] \
+    || { echo "ERROR: $APPCAST missing — Sparkle needs it. Restore from git." >&2; exit 1; }
 
 [[ -z "$(git status --porcelain)" ]] \
     || { echo "ERROR: working tree dirty. Commit or stash first." >&2; exit 1; }
@@ -228,6 +247,66 @@ echo "==> Re-zipping (so the asset carries the stapled ticket)"
 rm -f "${BUILD_DIR}/${ASSET}"
 ditto -c -k --keepParent "${APP}" "${BUILD_DIR}/${ASSET}"
 
+# ── Sparkle: sign the asset + update appcast.xml ────────────────────
+# sign_update reads the EdDSA private key from the login keychain. Output
+# format: `sparkle:edSignature="..." length="..."` — quote-delimited and
+# we parse it with sed.
+echo "==> Signing asset with Sparkle EdDSA key"
+SIGN_LINE="$("${SPARKLE_BIN_DIR}/sign_update" "${BUILD_DIR}/${ASSET}")"
+ED_SIG="$(echo "$SIGN_LINE" | sed -E 's/.*sparkle:edSignature="([^"]+)".*/\1/')"
+ASSET_LEN="$(echo "$SIGN_LINE" | sed -E 's/.*length="([^"]+)".*/\1/')"
+if [[ -z "$ED_SIG" || -z "$ASSET_LEN" || "$ED_SIG" == "$SIGN_LINE" ]]; then
+    echo "ERROR: failed to parse sign_update output: $SIGN_LINE" >&2
+    exit 1
+fi
+echo "    edSignature ${ED_SIG:0:24}…  length ${ASSET_LEN}"
+
+DOWNLOAD_URL="https://github.com/${GH_REPO}/releases/download/${TAG}/${ASSET}"
+RELEASE_NOTES_LINK="https://github.com/${GH_REPO}/releases/tag/${TAG}"
+
+echo "==> Updating ${APPCAST}"
+python3 - "$APPCAST" "$TAG" "$VERSION" "$next_build" "$ED_SIG" "$ASSET_LEN" "$DOWNLOAD_URL" "$RELEASE_NOTES_LINK" "$PRERELEASE" <<'PYEOF'
+import sys
+from datetime import datetime, timezone
+
+appcast, tag, short_ver, build, ed_sig, length, dl_url, notes_link, prerelease = sys.argv[1:]
+
+pub_date = datetime.now(timezone.utc).strftime('%a, %d %b %Y %H:%M:%S +0000')
+channel_line = f"      <sparkle:channel>{prerelease}</sparkle:channel>\n" if prerelease else ""
+
+item = (
+    "    <item>\n"
+    f"      <title>{tag}</title>\n"
+    f"      <pubDate>{pub_date}</pubDate>\n"
+    f"      <sparkle:version>{build}</sparkle:version>\n"
+    f"      <sparkle:shortVersionString>{short_ver}</sparkle:shortVersionString>\n"
+    "      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>\n"
+    f"{channel_line}"
+    f"      <sparkle:releaseNotesLink>{notes_link}</sparkle:releaseNotesLink>\n"
+    f"      <enclosure url=\"{dl_url}\" length=\"{length}\" "
+    f"type=\"application/octet-stream\" sparkle:edSignature=\"{ed_sig}\" />\n"
+    "    </item>\n"
+)
+
+with open(appcast, 'r', encoding='utf-8') as f:
+    src = f.read()
+
+marker = "<!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->\n"
+if marker not in src:
+    sys.exit(f"ERROR: marker line not found in {appcast}; refuse to mangle it.")
+
+new_src = src.replace(marker, marker + item, 1)
+with open(appcast, 'w', encoding='utf-8') as f:
+    f.write(new_src)
+PYEOF
+
+# Sanity: re-verify the signature we just wrote by reading it back from
+# the appcast. A mismatch here means the script raced or the file got
+# stomped, and we should NOT push a bad feed.
+APPCAST_SIG="$(grep -m1 "sparkle:edSignature=" "$APPCAST" | sed -E 's/.*sparkle:edSignature="([^"]+)".*/\1/')"
+[[ "$APPCAST_SIG" == "$ED_SIG" ]] \
+    || { echo "ERROR: appcast.xml top sig does not match the signature we just generated." >&2; exit 1; }
+
 # ── Tag + GitHub release ────────────────────────────────────────────
 echo "==> Tagging ${TAG}"
 git tag -a "${TAG}" -m "${TAG}"
@@ -246,6 +325,15 @@ else
         --generate-notes \
         "${BUILD_DIR}/${ASSET}"
 fi
+
+# ── Publish the updated appcast ─────────────────────────────────────
+# The asset is now reachable at $DOWNLOAD_URL, so it's safe to push the
+# new feed entry. Existing installs will pick it up from
+# raw.githubusercontent.com on next Sparkle check.
+echo "==> Publishing ${APPCAST} update"
+git add "${APPCAST}"
+git commit -m "Update appcast for ${TAG}"
+git push origin main
 
 echo
 echo "==> Done"

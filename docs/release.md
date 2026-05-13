@@ -4,7 +4,7 @@ This is the end-to-end "cut a new public build" workflow. The whole
 thing is automated by [`release.sh`](../release.sh) once a few
 one-time bits of machine state are in place.
 
-## Contract (five rules)
+## Contract (six rules)
 
 Any change to `release.sh` must preserve these. They are the canonical
 release-flow rules for this project; if you (human or agent) are about
@@ -29,6 +29,12 @@ to cut a release, this is the checklist.
    messages since the previous tag. `--notes-file` exists as an
    override but is the exception — keep commit messages descriptive
    instead of relying on a custom file.
+6. **Every release ships a signed appcast.** The asset is signed with
+   the Sparkle EdDSA key, the new `<item>` is inserted at the top of
+   `appcast.xml`, and that file is committed + pushed to `main`
+   **after** the GitHub Release exists. Existing installs poll
+   `raw.githubusercontent.com/.../main/appcast.xml`, so the feed must
+   never reference a download URL that isn't yet live.
 
 ## What gets produced
 
@@ -45,6 +51,12 @@ suffix):
 
 End users download the zip, unzip, drag the app to `/Applications`,
 and double-click. No Gatekeeper warning, no right-click → Open.
+
+In-place updates happen via **Sparkle 2**: the app polls
+`appcast.xml`, verifies the new zip's EdDSA signature against
+`SUPublicEDKey`, and an XPC installer service swaps the bundle on
+disk. We don't hand-roll any of that any more — see
+[`Sources/Services/UpdaterService.swift`](../Sources/Services/UpdaterService.swift).
 
 ## One-time setup
 
@@ -87,7 +99,39 @@ Manage Certificates… → `+` → **Developer ID Application**. Make sure
 the **private key** for the cert is also in the keychain — the cert
 without the key can't sign.
 
-### 4. `notarytool` keychain profile
+### 4. Sparkle EdDSA key
+
+Sparkle signs every release asset with an EdDSA key. The public half
+lives in `project.yml` (→ `Info.plist` as `SUPublicEDKey`); the
+private half lives in your **login keychain** under
+`https://sparkle-project.org` and is read by `sign_update` at release
+time. Generate it once with:
+
+```sh
+./DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys
+```
+
+(That path exists after any Debug build resolves the Sparkle SPM
+package.) The tool prints the public key — match it against
+`SUPublicEDKey` in `project.yml`; if they differ, the public key in
+`project.yml` is authoritative for already-released installs. **Never
+regenerate the key after the first release ships** — existing
+installs will reject updates signed with a new private key. If the
+key is genuinely lost, you have to ship a one-time "manual download"
+build that has a fresh `SUPublicEDKey` and tell users to install it
+by hand.
+
+Back the private key up out-of-band:
+
+```sh
+./DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys \
+    -x sparkle_ed_private_key.pem
+```
+
+(Then move that file to a password manager / hardware key. Delete the
+on-disk copy.)
+
+### 5. `notarytool` keychain profile
 
 `release.sh` calls `notarytool` with `--keychain-profile zedis-notary`.
 Set the profile up once:
@@ -175,10 +219,20 @@ from commit messages since the previous tag (`gh release create
     `source=Notarized Developer ID`.
 16. **Re-zip** the now-stapled app (the original zip didn't carry the
     ticket).
-17. **Tag** the bump commit `vX.Y.Z[-suffix]` and push.
-18. **`gh release create`** with the zip as the asset and
+17. **Sparkle-sign** the final zip with `sign_update` and capture the
+    EdDSA signature + length.
+18. **Insert a new `<item>` at the top of `appcast.xml`** with the
+    signature, length, predicted GitHub release download URL,
+    `sparkle:version` (= build number), `sparkle:shortVersionString`,
+    `sparkle:minimumSystemVersion=15.0`, and (for pre-releases)
+    `sparkle:channel=<suffix>`.
+19. **Tag** the bump commit `vX.Y.Z[-suffix]` and push.
+20. **`gh release create`** with the zip as the asset and
     `--generate-notes` (or `--notes-file` if explicitly requested),
     marking prerelease when applicable.
+21. **Commit + push `appcast.xml`** to `main` (`Update appcast for
+    vX.Y.Z`). This must happen *after* `gh release create` so the feed
+    never points at a 404.
 
 ## Troubleshooting
 
@@ -226,6 +280,25 @@ Usually means the tag already has a release. Same fix as above.
 
 The keychain profile name is wrong or got corrupted. Re-run
 `store-credentials` to recreate it.
+
+### `sign_update` fails or hangs on a Keychain prompt
+
+The first call after a fresh keychain login asks for permission to
+read the Sparkle EdDSA private key. Click "Always Allow" so future
+release runs don't block.
+
+If `sign_update` reports "No existing signing key found", regenerate
+**only on machines that have never released before** — on a machine
+that has, restore the key from your backup (`generate_keys -f
+sparkle_ed_private_key.pem`) instead.
+
+### Sparkle says "The update is improperly signed" after install
+
+Means `SUPublicEDKey` in the running app doesn't match the private
+key that signed the asset. Either the key in `project.yml` drifted,
+or someone signed with the wrong machine's key. Re-sign the asset
+with the correct key (see `sign_update`), edit `appcast.xml` to use
+the new signature, push, and tell affected users to re-check.
 
 ## Manual mode
 

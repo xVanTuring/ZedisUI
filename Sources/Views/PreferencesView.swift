@@ -3,6 +3,10 @@ import SwiftUI
 struct PreferencesView: View {
     @Environment(AppState.self) private var appState
 
+    // Mirrors Sparkle's own `automaticallyChecksForUpdates`. The
+    // @AppStorage keeps the Launcher's silent-check gate in sync with
+    // what Sparkle persists internally; UpdaterService writes through
+    // to both via `autoCheck`.
     @AppStorage("updater.autoCheck") private var autoCheckUpdates: Bool = true
     @AppStorage("updater.includePrereleases") private var includePrereleases: Bool = false
 
@@ -36,10 +40,16 @@ struct PreferencesView: View {
     private var updatesTab: some View {
         Form {
             Section {
-                Toggle("Automatically check for updates on launch", isOn: $autoCheckUpdates)
+                Toggle("Automatically check for updates on launch", isOn: Binding(
+                    get: { autoCheckUpdates },
+                    set: { newValue in
+                        autoCheckUpdates = newValue
+                        appState.updater.autoCheck = newValue
+                    }
+                ))
                 Toggle("Include pre-releases", isOn: $includePrereleases)
             } footer: {
-                Text("ZedisUI checks the project's GitHub releases. The new build is downloaded for you, but you'll be asked to drag it into /Applications because the sandbox forbids self-replacement.")
+                Text("Updates are downloaded, verified with EdDSA, and installed by Sparkle's out-of-process helper. Pre-release builds come from the `beta` channel in the appcast.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -61,9 +71,9 @@ struct PreferencesView: View {
                 HStack {
                     Spacer()
                     Button("Check Now…") {
-                        NotificationCenter.default.post(name: .openUpdaterWindow, object: nil)
-                        Task { await appState.updater.check() }
+                        appState.updater.checkForUpdates()
                     }
+                    .disabled(!appState.updater.canCheck)
                 }
             }
         }

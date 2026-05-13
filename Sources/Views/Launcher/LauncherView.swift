@@ -116,16 +116,11 @@ struct LauncherView: View {
             }
         }
         .task {
-            // Silent launch-time update check. Only auto-opens the
-            // updater window if a newer version exists.
+            // Silent launch-time update check. Sparkle handles its own
+            // UI — if there's an update, the standard "Update available"
+            // window appears; otherwise nothing is shown.
             guard autoCheckUpdates else { return }
-            let phase = await appState.updater.check(silent: true)
-            if case .available = phase {
-                openWindow(id: WindowID.updater)
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .openUpdaterWindow)) { _ in
-            openWindow(id: WindowID.updater)
+            appState.updater.checkInBackground()
         }
     }
 
