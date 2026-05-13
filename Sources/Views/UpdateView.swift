@@ -158,19 +158,29 @@ struct UpdateView: View {
                 Text("Version \(release.version) is ready to install")
                     .font(.headline)
             }
-            Text("To finish updating:")
-                .font(.subheadline.weight(.semibold))
-            VStack(alignment: .leading, spacing: 6) {
-                bullet("1. Quit ZedisUI.")
-                bullet("2. In the Finder window that opens, drag **ZedisUI.app** into **/Applications**, replacing the existing copy.")
-                bullet("3. Relaunch ZedisUI from /Applications or Spotlight.")
-            }
-            .font(.callout)
+            if appState.updater.canInstallInPlace {
+                Text("Click **Restart & Install** to finish. ZedisUI will quit, swap in the new version, and relaunch automatically.")
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("If anything goes wrong, the previous version is kept alongside until install completes; you can also use Reveal in Finder to install by hand.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("To finish updating:")
+                    .font(.subheadline.weight(.semibold))
+                VStack(alignment: .leading, spacing: 6) {
+                    bullet("1. Quit ZedisUI.")
+                    bullet("2. In the Finder window that opens, drag **ZedisUI.app** into **/Applications**, replacing the existing copy.")
+                    bullet("3. Relaunch ZedisUI from /Applications or Spotlight.")
+                }
+                .font(.callout)
 
-            Text("ZedisUI runs in the macOS sandbox and can't replace itself on disk — the drag step is one-time.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.top, 4)
+                Text("Auto-install requires ZedisUI to be in /Applications — this build is running from a different location, so the drag step is required.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+            }
             Spacer()
         }
     }
@@ -227,7 +237,12 @@ struct UpdateView: View {
             Button("Reveal in Finder") {
                 appState.updater.revealInFinder()
             }
-            .keyboardShortcut(.defaultAction)
+            if appState.updater.canInstallInPlace {
+                Button("Restart & Install") {
+                    appState.updater.installAndRestart()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
         }
     }
 

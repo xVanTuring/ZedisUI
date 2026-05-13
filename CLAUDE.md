@@ -48,8 +48,11 @@ Do NOT trigger a release yourself; it is user-initiated.
   `@preconcurrency import RediStack/NIOCore/NIOPosix` in `RedisService.swift`.
   Do not flip these to Swift 6 / `complete` without adapting that file — it
   will not compile.
-- App sandbox is on with `network.client` and `files.user-selected.read-write`
-  entitlements only.
+- App sandbox is on with `network.client`, `network.server`,
+  `files.user-selected.read-write`, plus a
+  `temporary-exception.files.absolute-path.read-write` for `/Applications/`
+  so the auto-updater can replace the bundle in place. The exception is
+  deliberately narrow — the rest of the disk remains sandboxed.
 
 ## Architecture
 

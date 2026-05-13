@@ -3,10 +3,10 @@ import Observation
 import AppKit
 
 /// Auto-updater that polls the project's GitHub releases for a newer build,
-/// downloads the signed+notarized zip asset, and unpacks it next to the
-/// user. The sandbox forbids us from writing to /Applications, so the
-/// "install" step is just revealing the unpacked .app in Finder — the
-/// user drags it over the old one and relaunches.
+/// downloads the signed+notarized zip asset, and either replaces the
+/// running bundle in-place (one-click Restart & Install) or falls back to
+/// "Reveal in Finder" when the current bundle lives outside /Applications/
+/// (e.g. a dev build under DerivedData).
 @Observable
 @MainActor
 final class UpdaterService {
@@ -110,6 +110,72 @@ final class UpdaterService {
     func revealInFinder() {
         guard case .readyToInstall(let url, _) = phase else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    /// True when the current bundle lives somewhere the sandbox + temp
+    /// exception lets us replace it (i.e. inside `/Applications/`). Used
+    /// to gate the "Restart & Install" button — for dev builds running
+    /// out of DerivedData we degrade to the manual reveal flow.
+    var canInstallInPlace: Bool {
+        Bundle.main.bundleURL.path.hasPrefix("/Applications/")
+    }
+
+    /// One-click install: hand a small shell to the system that waits for
+    /// us to exit, swaps the bundle on disk, and relaunches. Returns
+    /// false when we can't proceed; on success the app terminates and
+    /// never returns.
+    @discardableResult
+    func installAndRestart() -> Bool {
+        guard case .readyToInstall(let newAppURL, _) = phase else { return false }
+        let currentBundleURL = Bundle.main.bundleURL
+        guard canInstallInPlace else {
+            phase = .error("Auto-install only works when ZedisUI is in /Applications. Use Reveal in Finder to install manually.")
+            return false
+        }
+
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let src = shellEscape(newAppURL.path)
+        let dst = shellEscape(currentBundleURL.path)
+        let backup = shellEscape(currentBundleURL.path + ".old-update")
+
+        // The subshell is detached with `&` so it survives our exit.
+        // Sequence: wait for parent → move old aside → ditto new in place
+        // → on failure roll back → on success delete the backup and open
+        // the new bundle.
+        let script = """
+        (
+          while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done
+          sleep 0.5
+          rm -rf \(backup) 2>/dev/null
+          if ! /bin/mv \(dst) \(backup); then exit 1; fi
+          if ! /usr/bin/ditto \(src) \(dst); then
+            /bin/mv \(backup) \(dst)
+            exit 2
+          fi
+          /bin/rm -rf \(backup)
+          /usr/bin/open \(dst)
+        ) &
+        """
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/sh")
+        proc.arguments = ["-c", script]
+        do {
+            try proc.run()
+        } catch {
+            phase = .error("Failed to start installer: \(error.localizedDescription)")
+            return false
+        }
+
+        // Quit now — the subshell is waiting for our PID to disappear.
+        NSApplication.shared.terminate(nil)
+        return true
+    }
+
+    /// POSIX single-quote escape so paths with spaces or quotes survive
+    /// substitution into the install script.
+    private func shellEscape(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// Opens the release page on github.com.
