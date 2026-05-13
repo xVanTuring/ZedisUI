@@ -85,6 +85,13 @@ targets:
         # without this entitlement both calls fail with EPERM.
         com.apple.security.network.server: true
         com.apple.security.files.user-selected.read-write: true
+        # Auto-updater replaces the .app bundle in /Applications in
+        # place; the temp-exception is the minimum extra write privilege
+        # needed. Listing it here (not just in the .entitlements file) is
+        # required because xcodegen regenerates Resources/ZedisUI.entitlements
+        # from this `properties` dict each time it runs.
+        com.apple.security.temporary-exception.files.absolute-path.read-write:
+          - /Applications/
     dependencies:
       - package: RediStack
         product: RediStack

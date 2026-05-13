@@ -10,10 +10,6 @@
 	<true/>
 	<key>com.apple.security.network.server</key>
 	<true/>
-	<!-- Auto-updater needs to replace ZedisUI.app in /Applications. The
-	     "temporary-exception" entitlements continue to work for outside-MAS
-	     apps; the path is intentionally narrow so the rest of the disk
-	     remains sandboxed. -->
 	<key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
 	<array>
 		<string>/Applications/</string>
