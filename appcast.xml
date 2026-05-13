@@ -15,7 +15,7 @@
       <sparkle:shortVersionString>0.2.3</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
       <sparkle:releaseNotesLink>https://github.com/xVanTuring/ZedisUI/releases/tag/v0.2.3</sparkle:releaseNotesLink>
-      <enclosure url="https://github.com/xVanTuring/ZedisUI/releases/download/v0.2.3/ZedisUI-0.2.3.zip" length="7306605" type="application/octet-stream" sparkle:edSignature="RWMV5lbpMauWa1bJICqzDaNxnC6HDNTjyol384rvFg3VQUlxR8uB/V1CJ+wfBT1xO2GfS9b6dqE6LK7tkPNQBA==" />
+      <enclosure url="https://github.com/xVanTuring/ZedisUI/releases/download/v0.2.3/ZedisUI-0.2.3.zip" length="7327917" type="application/octet-stream" sparkle:edSignature="/HYz3WIkSJr/x9QAQiWgeq5BIy6idWHdGYEp4qZs1viBkl9sgar9XEk3B3PhskjpAELy5Ca5DwppGvOUR93vAA==" />
     </item>
     <!-- END-ITEMS -->
   </channel>

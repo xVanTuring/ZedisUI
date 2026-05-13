@@ -229,7 +229,7 @@ codesign -v --strict "${APP}"
 
 # ── Notarize ────────────────────────────────────────────────────────
 echo "==> Zipping for notary upload"
-ditto -c -k --keepParent "${APP}" "${BUILD_DIR}/${ASSET}"
+ditto -c -k --sequesterRsrc --keepParent "${APP}" "${BUILD_DIR}/${ASSET}"
 
 echo "==> Submitting to Apple notary (typically 1–5 min)"
 xcrun notarytool submit "${BUILD_DIR}/${ASSET}" \
@@ -245,7 +245,17 @@ spctl -a -t exec -vv "${APP}"
 
 echo "==> Re-zipping (so the asset carries the stapled ticket)"
 rm -f "${BUILD_DIR}/${ASSET}"
-ditto -c -k --keepParent "${APP}" "${BUILD_DIR}/${ASSET}"
+# --sequesterRsrc is load-bearing: without it, ditto stuffs AppleDouble
+# metadata as `._File` siblings *inside* the bundle. Sparkle's installer
+# (which uses ditto -x) merges them back into xattrs fine, but BSD
+# `unzip` — which Finder's Archive Utility delegates to for manual zip
+# downloads — leaves them as real files in `Contents/`, breaking the
+# code-signature seal ("a sealed resource is missing or invalid").
+# Result: "Apple could not verify..." Gatekeeper alert for anyone who
+# unzips the asset by hand. With --sequesterRsrc the metadata goes into
+# a `__MACOSX/` sibling that unzip ignores, and ditto -x still merges
+# it. Don't remove this flag.
+ditto -c -k --sequesterRsrc --keepParent "${APP}" "${BUILD_DIR}/${ASSET}"
 
 # ── Sparkle: sign the asset + update appcast.xml ────────────────────
 # sign_update reads the EdDSA private key from the login keychain. Output
