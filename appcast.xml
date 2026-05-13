@@ -8,6 +8,15 @@
     <description>Updates for ZedisUI, a native macOS Redis client.</description>
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
+    <item>
+      <title>v0.2.3</title>
+      <pubDate>Wed, 13 May 2026 06:52:31 +0000</pubDate>
+      <sparkle:version>7</sparkle:version>
+      <sparkle:shortVersionString>0.2.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/xVanTuring/ZedisUI/releases/tag/v0.2.3</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/xVanTuring/ZedisUI/releases/download/v0.2.3/ZedisUI-0.2.3.zip" length="7306605" type="application/octet-stream" sparkle:edSignature="RWMV5lbpMauWa1bJICqzDaNxnC6HDNTjyol384rvFg3VQUlxR8uB/V1CJ+wfBT1xO2GfS9b6dqE6LK7tkPNQBA==" />
+    </item>
     <!-- END-ITEMS -->
   </channel>
 </rss>
