@@ -9,6 +9,13 @@ multi-connection, type-aware key editing, inline command terminal.
 > core flow works end-to-end; known gaps and follow-ups are tracked in
 > [`TODO.md`](TODO.md).
 
+## Screenshots
+
+| | | |
+|:---:|:---:|:---:|
+| ![Launch](docs/images/launch.png) | ![Hash](docs/images/general-1-hash.png) | ![JSON](docs/images/general-2-json.png) |
+| ![Nested JSON](docs/images/general-3-json-nest.png) | ![JSON String](docs/images/general-4-json-string.png) | |
+
 ## Features
 
 ### Connections
