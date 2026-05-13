@@ -126,9 +126,36 @@ rm -f project.yml.bak
 
 xcodegen >/dev/null
 
+# Verify the bumped sources actually build before committing. A failure here
+# leaves no half-baked commit on the branch — we restore the two tracked files
+# and exit cleanly. (.xcodeproj is gitignored, so a re-run of xcodegen rebuilds
+# it; we don't have to track it here.)
+echo "==> Verifying Debug build before commit"
+if ! xcodebuild \
+        -project "${PROJECT}" \
+        -scheme "${SCHEME}" \
+        -configuration Debug \
+        -derivedDataPath DerivedData \
+        build \
+        | tail -40; then
+    echo "ERROR: Debug build failed. Reverting version bump." >&2
+    git checkout -- project.yml Resources/Info.plist
+    xcodegen >/dev/null
+    exit 1
+fi
+
 echo "==> Committing version bump"
 git add project.yml Resources/Info.plist
 git commit -m "Bump version to ${VERSION} (build ${next_build})"
+
+# Belt-and-suspenders: the commit above should have captured every tracked
+# change, but if anything else slipped in (e.g. a hook touched a file) we want
+# to know before pushing.
+if [[ -n "$(git status --porcelain)" ]]; then
+    echo "ERROR: working tree dirty after version-bump commit. Resolve before push." >&2
+    git status --short >&2
+    exit 1
+fi
 
 if [[ "$DRY_RUN" == "true" ]]; then
     echo "==> [dry-run] stopping before push/build/release."

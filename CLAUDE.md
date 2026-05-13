@@ -34,6 +34,13 @@ When iterating on UI, kill the running app first:
 
 There are no tests yet.
 
+### Cutting a release
+
+See [`docs/release.md`](docs/release.md). The flow is automated by
+`./release.sh <version>` and has a five-rule contract at the top of
+that doc — read it before changing `release.sh` or running a release.
+Do NOT trigger a release yourself; it is user-initiated.
+
 ### Important build settings
 
 - `SWIFT_VERSION: "5.0"` and `SWIFT_STRICT_CONCURRENCY: minimal` are deliberate.

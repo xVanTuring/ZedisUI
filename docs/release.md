@@ -4,6 +4,32 @@ This is the end-to-end "cut a new public build" workflow. The whole
 thing is automated by [`release.sh`](../release.sh) once a few
 one-time bits of machine state are in place.
 
+## Contract (five rules)
+
+Any change to `release.sh` must preserve these. They are the canonical
+release-flow rules for this project; if you (human or agent) are about
+to cut a release, this is the checklist.
+
+1. **User-triggered only.** Releases start with a human running
+   `./release.sh <version>`. Never auto-trigger from a script or agent.
+2. **Bump → build-verify → commit.** After bumping `project.yml` and
+   regenerating `Resources/Info.plist` via `xcodegen`, run a Debug
+   `xcodebuild` to confirm the bumped sources compile. Only commit if
+   the build succeeds. On failure, restore both files (`git checkout
+   --`) + re-run `xcodegen` and exit — never leave a half-baked
+   version-bump commit on the branch.
+3. **Working tree clean before push.** Pre-flight requires `git status
+   --porcelain` empty before bumping; after the bump commit there is a
+   second `--porcelain` check. Push only when both pass.
+4. **Tag every released version.** After archive + notarize + staple
+   succeed, the script creates an annotated tag (`vX.Y.Z` or
+   `vX.Y.Z-<pre>` for pre-releases) on the bump commit and pushes it.
+5. **Release notes derived from commits.** Default uses `gh release
+   create --generate-notes` so GitHub renders notes from commit
+   messages since the previous tag. `--notes-file` exists as an
+   override but is the exception — keep commit messages descriptive
+   instead of relying on a custom file.
+
 ## What gets produced
 
 For a given version `X.Y.Z` (optionally with a `--prerelease beta`
@@ -119,32 +145,49 @@ from commit messages since the previous tag (`gh release create
 
 ## What the script does, step by step
 
-1. **Pre-flight checks** — fails fast if any prereq is missing.
+1. **Pre-flight checks** — fails fast if any prereq is missing,
+   including `git status --porcelain` being empty.
 2. **Bump version in `project.yml`** — sets `CFBundleShortVersionString`
    and bumps `CFBundleVersion`.
 3. **Regenerate xcodeproj** via `xcodegen`.
-4. **Commit + push** the version bump on `main`.
-5. **Archive** the Release configuration into
+4. **Verify Debug build** — `xcodebuild -configuration Debug build`.
+   On failure: `git checkout -- project.yml Resources/Info.plist`,
+   re-run `xcodegen`, exit non-zero. No commit is created.
+5. **Commit** the version bump (`project.yml` +
+   `Resources/Info.plist`).
+6. **Post-commit clean check** — a second `git status --porcelain`
+   guard. If anything else slipped in (hook, stray file), abort before
+   pushing.
+7. **Push `main`**.
+8. **Archive** the Release configuration into
    `build/ZedisUI.xcarchive`.
-6. **Write `build/ExportOptions.plist`** with
+9. **Write `build/ExportOptions.plist`** with
    `method=developer-id`, `teamID=T8F5T6HKG8`, automatic signing.
-7. **Export** → `build/Export/ZedisUI.app` re-signed with Developer ID.
-8. **Verify signature** with `codesign -d` and `codesign -v --strict`.
-9. **`ditto -c -k`** the app into `build/ZedisUI-<version>.zip`.
-10. **Submit to Apple notary**
+10. **Export** → `build/Export/ZedisUI.app` re-signed with Developer ID.
+11. **Verify signature** with `codesign -d` and `codesign -v --strict`.
+12. **`ditto -c -k`** the app into `build/ZedisUI-<version>.zip`.
+13. **Submit to Apple notary**
     (`xcrun notarytool submit --keychain-profile zedis-notary --wait`)
     — blocks here until the result comes back, typically 1–5 minutes.
-11. **Staple** the notary ticket onto the app (`xcrun stapler staple`)
+14. **Staple** the notary ticket onto the app (`xcrun stapler staple`)
     so Gatekeeper can verify offline.
-12. **Verify Gatekeeper** with `spctl -a -t exec -vv` — expect
+15. **Verify Gatekeeper** with `spctl -a -t exec -vv` — expect
     `source=Notarized Developer ID`.
-13. **Re-zip** the now-stapled app (the original zip didn't carry the
+16. **Re-zip** the now-stapled app (the original zip didn't carry the
     ticket).
-14. **Tag** the bump commit `vX.Y.Z[-suffix]` and push.
-15. **`gh release create`** with the zip as the asset, marking
-    prerelease when applicable.
+17. **Tag** the bump commit `vX.Y.Z[-suffix]` and push.
+18. **`gh release create`** with the zip as the asset and
+    `--generate-notes` (or `--notes-file` if explicitly requested),
+    marking prerelease when applicable.
 
 ## Troubleshooting
+
+### Debug build verification failed
+
+The script restored `project.yml` + `Resources/Info.plist` and exited
+before committing. Fix the compile error on `main`, commit it, then
+re-run `./release.sh <version>`. No clean-up is needed — the bump
+was rolled back.
 
 ### "ARCHIVE FAILED" with a signing error
 
