@@ -40,7 +40,7 @@ actor SSHTunnelService {
             case .forwardFailed(let s):
                 return "SSH port forwarding failed: \(s)"
             case .timeout:
-                return "SSH tunnel did not become ready within 15 seconds."
+                return "SSH tunnel did not become ready within \(Int(SSHTunnelService.readyTimeoutSeconds)) seconds."
             case .unexpected(let s):
                 return "SSH tunnel error: \(s)"
             }
@@ -61,6 +61,14 @@ actor SSHTunnelService {
     /// askpass helper script (chmod 700).
     private var tempFiles: [URL] = []
     private(set) var localPort: Int = 0
+
+    /// Upper bound for how long we'll wait for ssh to print
+    /// "Local forwarding listening on" after launch. Must comfortably
+    /// exceed `ConnectTimeout` (10s) plus key exchange + auth +
+    /// forwarding setup on a slow network — a 15s budget left only ~5s
+    /// after a worst-case TCP connect, which timed out for users on
+    /// laggy links before any real failure could surface.
+    private static let readyTimeoutSeconds: TimeInterval = 30
 
     init(
         sshHost: String,
@@ -214,11 +222,25 @@ actor SSHTunnelService {
 
     // MARK: - Ready detection
 
-    /// Reads stderr until ssh prints the "Local forwarding listening" line
+    /// Reads stderr until ssh signals it's actually serving the forward
     /// (or matching error markers, or the process exits). Returns
     /// successfully once the tunnel is up; throws otherwise. Stays
     /// installed as a readabilityHandler after returning so the pipe
     /// doesn't fill up over the session's lifetime.
+    ///
+    /// Two distinct signals matter here:
+    ///   1. `"Local forwarding listening on"` — listen() has returned on
+    ///      the local socket. TCP handshakes will complete (kernel
+    ///      backlog), but ssh has NOT yet entered the event loop, so it
+    ///      hasn't accept()ed any forwarded connections nor opened the
+    ///      remote channel. Connecting Redis here races against that
+    ///      gap and AUTH/PING can time out before SSH catches up.
+    ///   2. `"Entering interactive session"` — ssh has entered
+    ///      `client_loop()`. This is the loop that does accept() +
+    ///      channel-open, so forwarding is actually live from this point.
+    ///
+    /// We prefer (2). (1) is kept as a fallback with a short grace
+    /// period in case an ssh build elides the interactive-session line.
     private func waitForReady(process: Process, stderr: Pipe) async throws {
         let handle = stderr.fileHandleForReading
         let buf = StderrBuffer()
@@ -231,7 +253,8 @@ actor SSHTunnelService {
             }
         }
 
-        let deadline = Date().addingTimeInterval(15)
+        let deadline = Date().addingTimeInterval(Self.readyTimeoutSeconds)
+        var listenerSeenAt: Date?
         while Date() < deadline {
             if !process.isRunning {
                 // Drain anything left.
@@ -245,8 +268,17 @@ actor SSHTunnelService {
             }
 
             let snapshot = await buf.snapshot()
-            if Self.signalsReady(snapshot) {
+            if Self.eventLoopReady(snapshot) {
                 return
+            }
+            if Self.listenerReady(snapshot) {
+                if let seen = listenerSeenAt {
+                    if Date().timeIntervalSince(seen) >= Self.listenerGraceSeconds {
+                        return
+                    }
+                } else {
+                    listenerSeenAt = Date()
+                }
             }
             if let err = Self.firstErrorMatch(snapshot) {
                 process.terminate()
@@ -261,10 +293,18 @@ actor SSHTunnelService {
         throw TunnelError.timeout
     }
 
-    private static func signalsReady(_ stderr: String) -> Bool {
-        stderr.contains("debug1: Local forwarding listening on") ||
-        stderr.contains("Local forwarding listening on") ||
+    /// Fallback grace period after the listener bind line, used only
+    /// when `Entering interactive session` never appears. Longer than
+    /// the typical setup-to-event-loop gap (microseconds–tens of ms),
+    /// short enough that users aren't waiting needlessly.
+    private static let listenerGraceSeconds: TimeInterval = 1.0
+
+    private static func eventLoopReady(_ stderr: String) -> Bool {
         stderr.contains("Entering interactive session")
+    }
+
+    private static func listenerReady(_ stderr: String) -> Bool {
+        stderr.contains("Local forwarding listening on")
     }
 
     private static func firstErrorMatch(_ stderr: String) -> TunnelError? {

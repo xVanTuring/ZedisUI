@@ -67,7 +67,15 @@ struct SessionWindow: View {
             credentialPrompt = request
             return
         }
-        await performConnect(credentials: nil)
+        // Detach the connect from the view's `.task` lifecycle. Awaiting
+        // `performConnect` directly here would chain into RediStack's
+        // AUTH future on the same task — and the moment AppState inserts
+        // the new session into `sessions`, our `.task(id:)` value flips
+        // (it watches `sessions[id] == nil`), SwiftUI cancels this task,
+        // and the future throws `Swift.CancellationError` before the
+        // handshake can finish. A fresh Task is independent of the view
+        // task and survives that flip.
+        Task { await performConnect(credentials: nil) }
     }
 
     private func performConnect(credentials: SessionCredentials?) async {
