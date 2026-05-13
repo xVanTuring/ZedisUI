@@ -344,6 +344,39 @@ final class RedisSession {
         for v in ["job-1001", "job-1002", "job-1003", "job-1004"] {
             try? await service.rpush("demo:list:queue", value: v)
         }
+        // Large list — exercise the pagination UI (pageSize=200, so 1500
+        // items spans 8 pages). Batch into one RPUSH per chunk to avoid
+        // 1500 round trips.
+        let bigItems = (0..<1500).map { "item-\(String(format: "%04d", $0))" }
+        for chunk in stride(from: 0, to: bigItems.count, by: 500) {
+            let slice = Array(bigItems[chunk..<min(chunk + 500, bigItems.count)])
+            _ = try? await service.raw("RPUSH", ["demo:list:big"] + slice)
+        }
+        // Large set / hash / zset — exercise Load More (Set/Hash) and
+        // page-based pagination (ZSet). 1500 each.
+        let bigSet = (0..<1500).map { "member-\(String(format: "%04d", $0))" }
+        for chunk in stride(from: 0, to: bigSet.count, by: 500) {
+            let slice = Array(bigSet[chunk..<min(chunk + 500, bigSet.count)])
+            _ = try? await service.raw("SADD", ["demo:set:big"] + slice)
+        }
+        var bigHashArgs: [String] = []
+        for i in 0..<1500 {
+            bigHashArgs.append("field-\(String(format: "%04d", i))")
+            bigHashArgs.append("value-\(i)")
+        }
+        for chunk in stride(from: 0, to: bigHashArgs.count, by: 1000) {
+            let slice = Array(bigHashArgs[chunk..<min(chunk + 1000, bigHashArgs.count)])
+            _ = try? await service.raw("HSET", ["demo:hash:big"] + slice)
+        }
+        var bigZsetArgs: [String] = []
+        for i in 0..<1500 {
+            bigZsetArgs.append(String(i))
+            bigZsetArgs.append("entry-\(String(format: "%04d", i))")
+        }
+        for chunk in stride(from: 0, to: bigZsetArgs.count, by: 1000) {
+            let slice = Array(bigZsetArgs[chunk..<min(chunk + 1000, bigZsetArgs.count)])
+            _ = try? await service.raw("ZADD", ["demo:zset:big"] + slice)
+        }
 
         // Set
         for v in ["swift", "redis", "macos", "ui", "client"] {

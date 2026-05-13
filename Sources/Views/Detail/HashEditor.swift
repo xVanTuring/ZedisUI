@@ -5,9 +5,23 @@ struct HashEditor: View {
     let key: String
 
     @State private var rows: [HashRow] = []
+    @State private var seenFields: Set<String> = []
+    @State private var cursor: Int = 0
+    @State private var totalLength: Int = 0
+    @State private var loading: Bool = false
     @State private var selection: HashRow.ID?
     @State private var newField = ""
     @State private var newValue = ""
+
+    @State private var query: String = ""
+    @State private var mode: SearchMode = .contain
+
+    private let pageSize = 200
+
+    /// In search mode each cursor step may return zero matches, so we
+    /// auto-loop until either we've collected this many or the cursor
+    /// returns to 0. Caps memory and keeps the UI responsive.
+    private let searchBatchTarget = 200
 
     struct HashRow: Identifiable, Hashable {
         let id = UUID()
@@ -15,8 +29,14 @@ struct HashEditor: View {
         var value: String
     }
 
+    private var searching: Bool { !query.isEmpty }
+
     var body: some View {
         VStack(spacing: 0) {
+            EditorSearchBar(query: $query, mode: $mode, placeholder: "Search fields…")
+
+            header
+
             Table(rows, selection: $selection) {
                 TableColumn("Field") { row in
                     Text(row.field)
@@ -43,6 +63,25 @@ struct HashEditor: View {
                 }
             }
 
+            if cursor != 0 {
+                Divider()
+                HStack {
+                    Spacer()
+                    Button {
+                        Task { await loadMore() }
+                    } label: {
+                        if loading {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text(loadMoreLabel)
+                        }
+                    }
+                    .disabled(loading)
+                    Spacer()
+                }
+                .padding(.vertical, 6)
+            }
+
             Divider()
             HStack {
                 TextField("Field", text: $newField)
@@ -57,9 +96,14 @@ struct HashEditor: View {
             }
             .padding(8)
         }
-        .task(id: key) { await load() }
-        // Push the focused row into the session so the right-side
-        // InspectorPanel can render and edit it.
+        .task(id: key) { await reload() }
+        // Search reruns only when the user commits a query (Enter or
+        // clear) or changes mode. Editing the text mid-keystroke doesn't
+        // re-query — the search bar commits `query` on submit.
+        .onChange(of: query) { _, _ in Task { await reload() } }
+        .onChange(of: mode) { _, _ in
+            if !query.isEmpty { Task { await reload() } }
+        }
         .onChange(of: selection) { _, newValue in
             if let id = newValue, let row = rows.first(where: { $0.id == id }) {
                 session.inspectorTarget = InspectorTarget(
@@ -72,22 +116,19 @@ struct HashEditor: View {
                 session.inspectorTarget = nil
             }
         }
-        // Switching keys keeps the editor visible until the new data
-        // arrives; clear stale inspector state so the panel doesn't show
-        // a row that no longer belongs to the current key.
         .onChange(of: key) { _, _ in
             selection = nil
             session.inspectorTarget = nil
+            query = ""
         }
-        // Inspector wrote through to Redis — refetch so the table reflects it.
         .onChange(of: session.dataVersion) { _, _ in
-            Task { await load() }
+            Task { await reload() }
         }
         .sheet(item: $editTarget) { row in
             EditValueSheet(field: row.field, initial: row.value) { newValue in
                 Task {
                     try? await session.service.hset(key, field: row.field, value: newValue)
-                    await load()
+                    await reload()
                 }
             }
         }
@@ -99,9 +140,79 @@ struct HashEditor: View {
         editTarget = row
     }
 
-    private func load() async {
-        let pairs = (try? await session.service.hgetall(key)) ?? []
-        rows = pairs.map { HashRow(field: $0.0, value: $0.1) }
+    private var loadMoreLabel: String {
+        if searching {
+            return "Load more matches (\(rows.count) so far)"
+        } else {
+            return "Load more (\(rows.count) of \(totalLength))"
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            if searching {
+                Text("\(rows.count) match\(rows.count == 1 ? "" : "es")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if cursor != 0 {
+                    Text("· scanning…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("· of \(totalLength) total")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("\(totalLength) field\(totalLength == 1 ? "" : "s")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if totalLength > 0 && rows.count < totalLength {
+                    Text("· \(rows.count) loaded")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+    }
+
+    /// Reset everything and pull the first batch. Used on key switch,
+    /// query/mode change, and after any mutation.
+    private func reload() async {
+        rows = []
+        seenFields = []
+        cursor = 0
+        totalLength = (try? await session.service.hlen(key)) ?? 0
+        await loadMore()
+    }
+
+    private func loadMore() async {
+        guard !loading else { return }
+        loading = true
+        defer { loading = false }
+
+        let pattern = buildGlobPattern(query, mode: mode)
+        let startCount = rows.count
+
+        // Browse mode: one HSCAN per click (predictable batch size).
+        // Search mode: loop until we hit the target or cursor=0, because
+        // each iteration may return zero matches.
+        repeat {
+            let (next, pairs) = (try? await session.service.hscan(
+                key, cursor: cursor, match: pattern, count: pageSize
+            )) ?? (0, [])
+            for (f, v) in pairs where !seenFields.contains(f) {
+                seenFields.insert(f)
+                rows.append(HashRow(field: f, value: v))
+            }
+            cursor = next
+            if cursor == 0 { break }
+            if !searching { break }
+            if rows.count - startCount >= searchBatchTarget { break }
+        } while true
     }
 
     private func addField() async {
@@ -109,12 +220,12 @@ struct HashEditor: View {
         try? await session.service.hset(key, field: f, value: v)
         newField = ""
         newValue = ""
-        await load()
+        await reload()
     }
 
     private func deleteField(_ field: String) async {
         try? await session.service.hdel(key, field: field)
-        await load()
+        await reload()
     }
 }
 

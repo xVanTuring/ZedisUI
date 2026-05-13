@@ -317,11 +317,47 @@ actor RedisService {
         _ = try await raw("HDEL", [key, field])
     }
 
+    func hlen(_ key: String) async throws -> Int {
+        let reply = try await raw("HLEN", [key])
+        return Int(reply.int ?? 0)
+    }
+
+    /// Cursor-based hash iteration. Returns the next cursor (0 means done)
+    /// and a batch of field/value pairs. HSCAN may return duplicates across
+    /// iterations during rehashing — caller is responsible for dedup. When
+    /// `match` is non-nil it is sent as the MATCH glob; the filter is
+    /// applied server-side after the slot is read, so many iterations may
+    /// return zero matches before cursor=0.
+    func hscan(_ key: String, cursor: Int, match: String? = nil, count: Int = 200) async throws -> (next: Int, pairs: [(String, String)]) {
+        var args = [key, String(cursor)]
+        if let m = match { args.append(contentsOf: ["MATCH", m]) }
+        args.append(contentsOf: ["COUNT", String(count)])
+        let reply = try await raw("HSCAN", args)
+        guard let array = reply.array, array.count >= 2 else {
+            throw ServiceError.unexpectedReply("HSCAN")
+        }
+        let nextCursor = Int(array[0].string ?? "0") ?? 0
+        var pairs: [(String, String)] = []
+        if let flat = array[1].array {
+            var i = 0
+            while i + 1 < flat.count {
+                pairs.append((flat[i].string ?? "", flat[i + 1].string ?? ""))
+                i += 2
+            }
+        }
+        return (nextCursor, pairs)
+    }
+
     // MARK: - List
 
     func lrange(_ key: String, start: Int = 0, stop: Int = -1) async throws -> [String] {
         let reply = try await raw("LRANGE", [key, String(start), String(stop)])
         return reply.array?.compactMap { $0.string } ?? []
+    }
+
+    func llen(_ key: String) async throws -> Int {
+        let reply = try await raw("LLEN", [key])
+        return Int(reply.int ?? 0)
     }
 
     func lset(_ key: String, index: Int, value: String) async throws {
@@ -358,6 +394,26 @@ actor RedisService {
         _ = try await raw("SREM", [key, member])
     }
 
+    func scard(_ key: String) async throws -> Int {
+        let reply = try await raw("SCARD", [key])
+        return Int(reply.int ?? 0)
+    }
+
+    /// Cursor-based set iteration. Returns the next cursor (0 means done)
+    /// and a batch of members. SSCAN may return duplicates during rehashing.
+    func sscan(_ key: String, cursor: Int, match: String? = nil, count: Int = 200) async throws -> (next: Int, members: [String]) {
+        var args = [key, String(cursor)]
+        if let m = match { args.append(contentsOf: ["MATCH", m]) }
+        args.append(contentsOf: ["COUNT", String(count)])
+        let reply = try await raw("SSCAN", args)
+        guard let array = reply.array, array.count >= 2 else {
+            throw ServiceError.unexpectedReply("SSCAN")
+        }
+        let nextCursor = Int(array[0].string ?? "0") ?? 0
+        let members = array[1].array?.compactMap { $0.string } ?? []
+        return (nextCursor, members)
+    }
+
     // MARK: - Sorted Set
 
     func zrange(_ key: String, start: Int = 0, stop: Int = -1) async throws -> [(String, Double)] {
@@ -380,6 +436,37 @@ actor RedisService {
 
     func zrem(_ key: String, member: String) async throws {
         _ = try await raw("ZREM", [key, member])
+    }
+
+    func zcard(_ key: String) async throws -> Int {
+        let reply = try await raw("ZCARD", [key])
+        return Int(reply.int ?? 0)
+    }
+
+    /// Cursor-based zset iteration. Returns the next cursor (0 means done)
+    /// and a batch of (member, score) pairs. ZSCAN traverses by hash slot,
+    /// so results are NOT in score order — caller may sort client-side if
+    /// score ordering matters.
+    func zscan(_ key: String, cursor: Int, match: String? = nil, count: Int = 200) async throws -> (next: Int, pairs: [(String, Double)]) {
+        var args = [key, String(cursor)]
+        if let m = match { args.append(contentsOf: ["MATCH", m]) }
+        args.append(contentsOf: ["COUNT", String(count)])
+        let reply = try await raw("ZSCAN", args)
+        guard let array = reply.array, array.count >= 2 else {
+            throw ServiceError.unexpectedReply("ZSCAN")
+        }
+        let nextCursor = Int(array[0].string ?? "0") ?? 0
+        var pairs: [(String, Double)] = []
+        if let flat = array[1].array {
+            var i = 0
+            while i + 1 < flat.count {
+                let member = flat[i].string ?? ""
+                let score = Double(flat[i + 1].string ?? "0") ?? 0
+                pairs.append((member, score))
+                i += 2
+            }
+        }
+        return (nextCursor, pairs)
     }
 
     // MARK: - Stream

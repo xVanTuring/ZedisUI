@@ -46,8 +46,8 @@
 - [x] **文件夹单击 toggle + 持久高亮** —— 用 `DisclosureGroup` 自管 `expandedFolders`；折叠/展开走 List 选中 setter（点行任意位置都覆盖）；视觉高亮用独立 `listSelection` 状态，folder 也能保持选中而不闪回上一个 leaf
 - [x] **TTL 编辑 popover** —— meta bar 上的 TTL 改成 popover：数字 + seconds/minutes/hours/days picker，Persist Key / Save 双按钮；无 TTL 显示 "Forever"
 - [ ] **批量选择删除 keys** —— 侧边栏 `List(selection:)` 当前是单选 `String?`，需要切到 `Set<String>`
-- [ ] **JSON 美化 / 二进制展示** —— `StringEditor` 是纯文本，无格式化、无 hex 视图
-- [ ] **List 大数据分页** —— `LRANGE 0 -1` 一次拉完，大 list 会卡（应该按 page 滚动）
+- [x] **JSON 美化 / 二进制展示** —— `StringEditor` 是纯文本，无格式化、无 hex 视图
+- [x] **List / ZSet / Hash / Set 大数据分页 + 搜索** —— List/ZSet 走 Page X of Y（`LRANGE`/`ZRANGE start stop` 切片，`.id(page)` 重置滚动）；Hash/Set 走 cursor + Load More（`HSCAN`/`SSCAN`）。所有编辑器顶部加 search bar：Contain/StartsWith/EndsWith/Glob 四种模式，回车提交。Hash/Set/ZSet 用 `*SCAN MATCH` 服务端过滤；List 默认 client-side 过滤当前页，可点 "Search entire list…" 触发流式 `LRANGE` 全扫（可 cancel）
 - [ ] **Reload 单个 key** —— inspector 写完目前是触发 editor 整表 reload；可以加只刷当前 key 的路径
 
 ## 开发辅助
