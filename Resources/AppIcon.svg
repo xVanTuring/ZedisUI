@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Variant A: refined classic. Same red squircle, but the Z geometry
+     is recalculated so the diagonal stripe has the same perpendicular
+     thickness (~100px) as the horizontal bars — looks visually balanced. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bgA" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E74C3C"/>
+      <stop offset="100%" stop-color="#A93226"/>
+    </linearGradient>
+  </defs>
+  <rect x="80" y="80" width="864" height="864" rx="194" ry="194" fill="url(#bgA)"/>
+  <path d="M 240 300 L 784 300 L 784 400 L 428 624 L 784 624 L 784 724 L 240 724 L 240 624 L 596 400 L 240 400 Z"
+        fill="#ffffff"/>
+</svg>

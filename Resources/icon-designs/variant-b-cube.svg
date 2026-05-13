@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Variant B: refined Z + 4-square "data cube" accent in bottom-right
+     corner, hinting at Redis's nodes/cluster aesthetic without copying
+     its logo. The Z is slightly shifted up-left to make room. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bgB" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E74C3C"/>
+      <stop offset="100%" stop-color="#A93226"/>
+    </linearGradient>
+  </defs>
+  <rect x="80" y="80" width="864" height="864" rx="194" ry="194" fill="url(#bgB)"/>
+
+  <!-- Z glyph, shifted slightly up-left -->
+  <path d="M 200 260 L 700 260 L 700 360 L 372 580 L 700 580 L 700 680 L 200 680 L 200 580 L 528 360 L 200 360 Z"
+        fill="#ffffff" fill-opacity="0.95"/>
+
+  <!-- 4-square cube accent in bottom-right -->
+  <g fill="#ffffff" fill-opacity="0.85">
+    <rect x="700" y="700" width="80" height="80" rx="14"/>
+    <rect x="800" y="700" width="80" height="80" rx="14"/>
+    <rect x="700" y="800" width="80" height="80" rx="14"/>
+    <rect x="800" y="800" width="80" height="80" rx="14"/>
+  </g>
+</svg>

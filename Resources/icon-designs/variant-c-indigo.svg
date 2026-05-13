@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Variant C: dev-tool aesthetic. Deep indigo squircle with a subtle
+     specular highlight, sharp white Z. Reads as "professional database
+     client" rather than "Redis brand colors". -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bgC" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#3D5AFE"/>
+      <stop offset="50%" stop-color="#1A237E"/>
+      <stop offset="100%" stop-color="#0D1138"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.25" cy="0.18" r="0.6">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="80" y="80" width="864" height="864" rx="194" ry="194" fill="url(#bgC)"/>
+  <rect x="80" y="80" width="864" height="864" rx="194" ry="194" fill="url(#glow)"/>
+  <path d="M 240 300 L 784 300 L 784 400 L 428 624 L 784 624 L 784 724 L 240 724 L 240 624 L 596 400 L 240 400 Z"
+        fill="#ffffff"/>
+</svg>

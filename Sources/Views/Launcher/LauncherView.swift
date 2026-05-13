@@ -909,18 +909,14 @@ private enum ConnectionProbe {
 
 private struct BrandLogo: View {
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(LinearGradient(
-                    colors: [Color(red: 0.95, green: 0.35, blue: 0.30),
-                             Color(red: 0.92, green: 0.55, blue: 0.35)],
-                    startPoint: .top,
-                    endPoint: .bottom))
-                .shadow(color: Color.red.opacity(0.35), radius: 14, x: 0, y: 8)
-            Text("Z")
-                .font(.system(size: 56, weight: .heavy, design: .rounded))
-                .foregroundStyle(.white)
-        }
+        // Show the actual app icon (rendered from Assets.xcassets/AppIcon)
+        // so the launcher and the dock can't drift apart visually. The
+        // shadow recreates the launcher's signature red glow.
+        Image(nsImage: NSApplication.shared.applicationIconImage)
+            .resizable()
+            .interpolation(.high)
+            .aspectRatio(contentMode: .fit)
+            .shadow(color: Color.red.opacity(0.35), radius: 14, x: 0, y: 8)
     }
 }
 

@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>ZedisUI icon variants</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+                background: #1c1c1e;
+                color: #eee;
+                margin: 0;
+                padding: 32px;
+            }
+            h1 {
+                font-weight: 600;
+                margin: 0 0 24px 0;
+            }
+            .grid {
+                display: grid;
+                grid-template-columns: 200px 1fr 96px 64px 32px 16px;
+                gap: 18px;
+                align-items: center;
+            }
+            .grid > * {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .label {
+                justify-content: flex-start;
+                font-size: 14px;
+                color: #ccc;
+            }
+            img.big {
+                width: 180px;
+                height: 180px;
+                border-radius: 12px;
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            }
+            img.med {
+                width: 96px;
+                height: 96px;
+            }
+            img.small {
+                width: 64px;
+                height: 64px;
+            }
+            img.dock {
+                width: 32px;
+                height: 32px;
+            }
+            img.tiny {
+                width: 16px;
+                height: 16px;
+            }
+            .header {
+                color: #888;
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+            }
+            .row + .row {
+                margin-top: 12px;
+                padding-top: 12px;
+                border-top: 1px solid #333;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>ZedisUI icon variants — preview at multiple sizes</h1>
+
+        <div class="grid">
+            <div class="header label">Variant</div>
+            <div class="header">180 (hero)</div>
+            <div class="header">96</div>
+            <div class="header">64</div>
+            <div class="header">32 (dock)</div>
+            <div class="header">16 (tiny)</div>
+        </div>
+
+        <div class="grid row">
+            <div class="label">Original<br />(red, narrower diagonal)</div>
+            <div><img class="big" src="./original.svg" /></div>
+            <div><img class="med" src="./original.svg" /></div>
+            <div><img class="small" src="./original.svg" /></div>
+            <div><img class="dock" src="./original.svg" /></div>
+            <div><img class="tiny" src="./original.svg" /></div>
+        </div>
+
+        <div class="grid row">
+            <div class="label">A — refined classic<br />(red, balanced Z)</div>
+            <div><img class="big" src="variant-a-classic.svg" /></div>
+            <div><img class="med" src="variant-a-classic.svg" /></div>
+            <div><img class="small" src="variant-a-classic.svg" /></div>
+            <div><img class="dock" src="variant-a-classic.svg" /></div>
+            <div><img class="tiny" src="variant-a-classic.svg" /></div>
+        </div>
+
+        <div class="grid row">
+            <div class="label">B — Z + cube accent<br />(red, nodes hint)</div>
+            <div><img class="big" src="variant-b-cube.svg" /></div>
+            <div><img class="med" src="variant-b-cube.svg" /></div>
+            <div><img class="small" src="variant-b-cube.svg" /></div>
+            <div><img class="dock" src="variant-b-cube.svg" /></div>
+            <div><img class="tiny" src="variant-b-cube.svg" /></div>
+        </div>
+
+        <div class="grid row">
+            <div class="label">
+                C — indigo dev-tool<br />(deep blue, white Z)
+            </div>
+            <div><img class="big" src="variant-c-indigo.svg" /></div>
+            <div><img class="med" src="variant-c-indigo.svg" /></div>
+            <div><img class="small" src="variant-c-indigo.svg" /></div>
+            <div><img class="dock" src="variant-c-indigo.svg" /></div>
+            <div><img class="tiny" src="variant-c-indigo.svg" /></div>
+        </div>
+    </body>
+</html>

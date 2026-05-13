@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ZedisUI app icon — 1024×1024 canvas, Big Sur+ squircle.
+
+  Design notes:
+  - Squircle inset 80px from each edge (864×864 visible), rx ≈ 194 (~22.5%
+    of side) approximates Apple's continuous-corner template.
+  - Crimson gradient nods to Redis branding without copying it.
+  - Bold white "Z" glyph: 100px-thick horizontal bars at y=300–400 and
+    y=624–724, diagonal stripe with 140px horizontal offset between
+    inner/outer edges. Parallel diagonal slopes (parallelogram stripe).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E74C3C"/>
+      <stop offset="100%" stop-color="#A93226"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="80" y="80" width="864" height="864" rx="194" ry="194" fill="url(#bg)"/>
+
+  <path d="M 240 300
+           L 784 300
+           L 784 400
+           L 380 624
+           L 784 624
+           L 784 724
+           L 240 724
+           L 240 624
+           L 644 400
+           L 240 400
+           Z"
+        fill="#ffffff"/>
+</svg>
