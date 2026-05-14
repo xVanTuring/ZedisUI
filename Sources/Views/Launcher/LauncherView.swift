@@ -131,7 +131,7 @@ struct LauncherView: View {
             Spacer().frame(height: 36)
 
             BrandLogo()
-                .frame(width: 96, height: 96)
+                .frame(width: 140, height: 140)
 
             VStack(spacing: 2) {
                 Text("ZedisUI")
