@@ -9,6 +9,15 @@
     <language>en</language>
     <!-- BEGIN-ITEMS (release.sh inserts new entries here, newest first) -->
     <item>
+      <title>v0.2.4</title>
+      <pubDate>Thu, 14 May 2026 11:08:44 +0000</pubDate>
+      <sparkle:version>8</sparkle:version>
+      <sparkle:shortVersionString>0.2.4</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/xVanTuring/ZedisUI/releases/tag/v0.2.4</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/xVanTuring/ZedisUI/releases/download/v0.2.4/ZedisUI-0.2.4.zip" length="7507740" type="application/octet-stream" sparkle:edSignature="dVgd6Hx/mIO6VJrTkcUajrzufS/0GAXktx6XynNT8jfvACt2YS7fHp0/LS/5qjdA/OAQwm3RnNndpIHoHNejAg==" />
+    </item>
+    <item>
       <title>v0.2.3</title>
       <pubDate>Wed, 13 May 2026 06:52:31 +0000</pubDate>
       <sparkle:version>7</sparkle:version>
