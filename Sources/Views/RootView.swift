@@ -286,9 +286,12 @@ private struct SessionContent: View {
                 .help("Command history")
             }
             ToolbarItem(placement: .primaryAction) {
-                Button { /* pubsub */ } label: { Image(systemName: "dot.radiowaves.left.and.right") }
-                    .disabled(true)
-                    .help("Pub/Sub (coming soon)")
+                Button {
+                    openWindow(id: WindowID.pubSub, value: session.connection)
+                } label: {
+                    Image(systemName: "dot.radiowaves.left.and.right")
+                }
+                .help("Pub/Sub")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button { /* lock */ } label: { Image(systemName: "lock.open") }

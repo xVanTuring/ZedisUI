@@ -15,6 +15,12 @@ final class AppState {
     /// live RedisService and the user's current DB / key selection.
     var sessions: [Connection.ID: RedisSession] = [:]
 
+    /// One Pub/Sub controller per connection, created lazily when the
+    /// Pub/Sub window is opened. Persists across window open/close so the
+    /// subscription survives if the user toggles the window — it's torn
+    /// down explicitly only on session disconnect / connection removal.
+    var pubSubControllers: [Connection.ID: PubSubController] = [:]
+
     /// Sheet flags (driven from the Launcher window)
     var showNewConnectionSheet: Bool = false
     var connectionBeingEdited: Connection?
@@ -50,6 +56,9 @@ final class AppState {
         if let existing = sessions[connection.id] {
             Task { await existing.disconnect() }
             sessions.removeValue(forKey: connection.id)
+        }
+        if let controller = pubSubControllers.removeValue(forKey: connection.id) {
+            controller.stop()
         }
     }
 
@@ -104,6 +113,9 @@ final class AppState {
         if let session = sessions[id] {
             Task { await session.disconnect() }
             sessions.removeValue(forKey: id)
+        }
+        if let controller = pubSubControllers.removeValue(forKey: id) {
+            controller.stop()
         }
         connections.removeAll { $0.id == id }
         ConnectionStore.shared.save(connections)
@@ -176,5 +188,20 @@ final class AppState {
         guard let session = sessions[id] else { return }
         await session.disconnect()
         sessions.removeValue(forKey: id)
+        if let controller = pubSubControllers.removeValue(forKey: id) {
+            controller.stop()
+        }
+    }
+
+    /// Returns the Pub/Sub controller for this session, creating one on
+    /// first use. Returns nil if no live session exists — Pub/Sub piggybacks
+    /// on the same connection profile and the controller needs an active
+    /// session to learn the (possibly tunneled) endpoint.
+    func pubSubController(for id: Connection.ID) -> PubSubController? {
+        if let existing = pubSubControllers[id] { return existing }
+        guard let session = sessions[id] else { return nil }
+        let controller = PubSubController(session: session)
+        pubSubControllers[id] = controller
+        return controller
     }
 }

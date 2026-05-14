@@ -80,6 +80,13 @@ actor RedisService {
         self.port = port
     }
 
+    /// The (possibly tunnel-rewritten) host/port this service is currently
+    /// pointed at. Pub/Sub uses this so it can open its own connection to
+    /// the same backend without re-resolving the SSH tunnel itself.
+    func currentEndpoint() -> (host: String, port: Int) {
+        (host, port)
+    }
+
     // MARK: - Lifecycle
 
     func connect(initialDB: Int = 0) async throws {

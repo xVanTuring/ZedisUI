@@ -76,6 +76,24 @@ struct ZedisUIApp: App {
             }
         }
 
+        // Pub/Sub — one window per connection. Owns a separate Redis
+        // connection (PubSub mode locks the wire) and shows received
+        // messages live. Same value-keyed reuse pattern as commandHistory.
+        WindowGroup(id: WindowID.pubSub, for: Connection.self) { $connection in
+            Group {
+                if let connection {
+                    PubSubView(connection: connection)
+                        .environment(appState)
+                } else {
+                    ContentUnavailableView(
+                        "No Connection",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text("This window is missing its connection.")
+                    )
+                }
+            }
+        }
+
         // Connection Detail — a separate window that surfaces the full
         // INFO snapshot (server, memory, clients, stats, keyspace) plus
         // the saved profile. Same value-keyed reuse pattern.
@@ -106,4 +124,5 @@ enum WindowID {
     static let session = "session"
     static let commandHistory = "command-history"
     static let connectionDetail = "connection-detail"
+    static let pubSub = "pubsub"
 }

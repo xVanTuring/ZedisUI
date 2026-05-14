@@ -6,7 +6,9 @@
 
 - [x] 导航前进 / 后退（`<` `>`）—— 用户选中 key 的历史栈，下一步要做
 - [ ] Read-only mode（锁图标）—— `disabled(true)`，help "Coming soon"
-- [ ] Pub/Sub（电波图标）—— `disabled(true)`，help "Coming soon"
+- [x] **Pub/Sub（电波图标）** —— 工具栏按钮打开独立窗口（`WindowID.pubSub`），独立 RedisConnection 走 PSUBSCRIBE；UI 三段式：顶部 channel pattern + ▶/⏹，中间 Time/Channel/Message 表，下面 Viewer (Auto/Plain/JSON/Hex, JSON 时 Tree/Text 切换) + Encoder dropdown，底栏 "Subscribed to:" + Clear
+- [ ] **Pub/Sub Encoder 解码实现** —— 当前枚举里有 None / MessagePack / Gzip / PHP / Base64，但只有 None 真接通；其他四个 dropdown 选中后还是按 None 处理。需要：Base64 解码到 bytes→UTF-8、Gzip 解压、MessagePack 解 RESP-like 输出、PHP serialize() 反序列化
+- [ ] **Viewer / Encoder 抽成通用组件** —— 现在 `ViewerMode` / `JSONMode` / `EncoderMode` 都耦在 `PubSubController` 里。需要抽成独立 module（`Views/ValueViewer/`?）：一个 `ValueViewerKind` 枚举（Auto/Plain/JSON/Hex）+ 一个 `Encoder` 协议或枚举 + 复用的渲染 view。然后接到：StringEditor（pretty 当前是 ad-hoc）、Hash/List/Set/ZSet 的 row preview、Inspector panel 的 secondary 字段。Pub/Sub 改用新组件
 
 ## 类型支持
 
